@@ -1,0 +1,329 @@
+# OWASP ZAP - Configuração para Single Page Applications (SPAs)
+# Versão: 1.0
+# Descrição: Configuração otimizada para testing de SPAs React, Angular, Vue.js
+
+env:
+  # Contexto específico para SPAs
+  contexts:
+    - name: "spa-application"
+      url: "${SPA_BASE_URL}"
+      includePaths:
+        - "${SPA_BASE_URL}/.*"
+      excludePaths:
+        - ".*\\.js\\.map$"
+        - ".*\\.css\\.map$"
+        - ".*node_modules.*"
+        - ".*\\.hot-update\\.js$"
+        - ".*sockjs-node.*"
+        - ".*webpack.*"
+      
+      # Configuração de autenticação para SPAs
+      authentication:
+        method: "json"
+        loginUrl: "${SPA_BASE_URL}/api/auth/login"
+        loginRequestData: '{"username":"${AUTH_USER}","password":"${AUTH_PASS}"}'
+        usernameParameter: "username"
+        passwordParameter: "password"
+        
+      # Configuração de sessão baseada em token
+      sessionManagement:
+        method: "cookie"
+        sessionTokens:
+          - "jwt"
+          - "access_token"
+          - "authorization"
+          
+      # Headers customizados para SPAs
+      globalHeaders:
+        - name: "Accept"
+          value: "application/json"
+        - name: "Content-Type"
+          value: "application/json"
+        - name: "X-Requested-With"
+          value: "XMLHttpRequest"
+
+  # Add-ons necessários para SPAs
+  addons:
+    - id: "ajaxspider"
+      action: "install"
+    - id: "selenium"
+      action: "install"
+    - id: "domxss"
+      action: "install"
+    - id: "jsonview"
+      action: "install"
+    - id: "postman"
+      action: "install"
+
+  # Parâmetros específicos para SPAs
+  parameters:
+    # Selenium WebDriver config
+    seleniumGridUrl: "http://selenium-hub:4444/wd/hub"
+    browserType: "chrome"
+    headless: true
+    windowSize: "1920x1080"
+    
+    # AJAX Spider config
+    ajaxSpiderMaxDuration: 15
+    ajaxSpiderMaxDepth: 10
+    numberOfBrowsers: 2
+    
+    # SPA specific settings
+    waitForElement: true
+    waitTime: 3000
+    clickElementsOnce: false
+    randomInputs: true
+
+jobs:
+  # 1. Configuração inicial do ambiente
+  - type: "env"
+    parameters:
+      globalVariables:
+        SPA_BASE_URL: "${SPA_BASE_URL}"
+        API_BASE_URL: "${API_BASE_URL}"
+        SELENIUM_GRID: "${SELENIUM_GRID_URL}"
+
+  # 2. Configuração do contexto SPA
+  - type: "context"
+    parameters:
+      context: "spa-application"
+      includePaths:
+        - "${SPA_BASE_URL}/.*"
+        - "${API_BASE_URL}/.*"
+      excludePaths:
+        # Recursos de desenvolvimento
+        - ".*\\.js\\.map$"
+        - ".*\\.css\\.map$"
+        - ".*webpack.*"
+        - ".*hot-update.*"
+        - ".*sockjs.*"
+        
+        # CDNs e recursos externos
+        - ".*googleapis\\.com.*"
+        - ".*gstatic\\.com.*"
+        - ".*cloudflare\\.com.*"
+        - ".*jsdelivr\\.net.*"
+        - ".*unpkg\\.com.*"
+
+  # 3. Spider tradicional para descoberta inicial
+  - type: "spider"
+    parameters:
+      context: "spa-application"
+      url: "${SPA_BASE_URL}"
+      maxDuration: 5
+      maxDepth: 3
+      maxChildren: 5
+      parseComments: false
+      parseRobotsTxt: false
+      parseSitemapXml: true
+      handleParameters: "IGNORE_COMPLETELY"
+      
+  # 4. AJAX Spider - Principal para SPAs
+  - type: "ajaxSpider"
+    parameters:
+      context: "spa-application"
+      url: "${SPA_BASE_URL}"
+      maxDuration: 15
+      maxCrawlDepth: 10
+      numberOfBrowsers: 2
+      inScopeOnly: true
+      
+      # Configurações específicas para SPAs
+      clickDefaultElems: true
+      clickElemsOnce: false # Importante para SPAs
+      randomInputs: true
+      reloadWait: 3000
+      
+      # Elementos a clicar
+      clickableElements: "a,button,[role=button],input[type=button],input[type=submit],.btn,.clickable,[onclick]"
+      
+      # Aguardar carregamento
+      eventWait: 2000
+      maxDuration: 900 # 15 minutos
+      
+      # Browser options
+      browserOptions:
+        - "--no-sandbox"
+        - "--disable-dev-shm-usage"
+        - "--disable-gpu"
+        - "--window-size=1920,1080"
+
+  # 5. Configuração Selenium para fluxos complexos (opcional)
+  - type: "selenium"
+    parameters:
+      context: "spa-application"
+      gridUrl: "${SELENIUM_GRID_URL}"
+      
+      # Scripts de automação para fluxos críticos
+      scripts:
+        - name: "login-flow"
+          description: "Automatizar login no SPA"
+          script: |
+            driver.get("${SPA_BASE_URL}");
+            
+            // Aguardar carregamento da página
+            WebDriverWait wait = new WebDriverWait(driver, 10);
+            
+            // Realizar login
+            wait.until(ExpectedConditions.presenceOfElementLocated(By.id("username")));
+            driver.findElement(By.id("username")).sendKeys("${AUTH_USER}");
+            driver.findElement(By.id("password")).sendKeys("${AUTH_PASS}");
+            driver.findElement(By.id("login-button")).click();
+            
+            // Aguardar dashboard carregar
+            wait.until(ExpectedConditions.presenceOfElementLocated(By.className("dashboard")));
+            
+            // Navegar por seções principais
+            String[] sections = {"profile", "settings", "data", "reports"};
+            for(String section : sections) {
+              try {
+                WebElement sectionLink = wait.until(ExpectedConditions.elementToBeClickable(By.linkText(section)));
+                sectionLink.click();
+                Thread.sleep(2000); // Aguardar carregamento
+                
+                // Voltar para dashboard
+                driver.findElement(By.className("home-link")).click();
+                Thread.sleep(1000);
+              } catch(Exception e) {
+                // Continue se seção não existir
+              }
+            }
+
+  # 6. Passive scan otimizado para SPAs
+  - type: "passiveScan-config"
+    parameters:
+      # Regras específicas para SPAs
+      enabledRules:
+        - "10055" # CSP Scanner
+        - "10063" # Feature Policy Header Not Set
+        - "40026" # Cross Site Scripting (DOM Based)
+        - "40040" # CORS misconfiguration
+        - "90033" # Loosely Scoped Cookie
+      
+      # Aguardar análise passiva
+      maxAlertsPerRule: 20
+
+  - type: "passiveScan-wait"
+    parameters:
+      maxDuration: 10
+
+  # 7. Active scan focado em SPAs
+  - type: "activeScan"
+    parameters:
+      context: "spa-application"
+      policy: "spa-security-policy"
+      maxRuleDurationInMins: 3
+      maxScanDurationInMins: 20
+      
+      # Configurações específicas para APIs/SPAs
+      addQueryParam: true
+      defaultPolicy: "Default Policy"
+      delayInMs: 500 # Delay menor para APIs
+      handleAntiCSRFTokens: true
+      injectPluginIdInHeader: false
+      scanHeadersAllRequests: true
+      threadPerHost: 3
+
+  # 8. Configuração de política específica para SPAs
+  - type: "activeScan-config"
+    parameters:
+      policyName: "spa-security-policy"
+      
+      # Focar em vulnerabilidades relevantes para SPAs
+      enabledRules:
+        # XSS (especialmente DOM-based)
+        - "40012" # Reflected XSS
+        - "40014" # Stored XSS
+        - "40016" # Stored XSS Prime
+        - "40026" # DOM XSS
+        
+        # CORS e CSP
+        - "40040" # CORS misconfiguration
+        - "10055" # CSP
+        
+        # Injection em APIs
+        - "40018" # SQL Injection
+        - "90020" # Command Injection
+        - "7" # Path Traversal
+        
+        # Session/Auth issues
+        - "40013" # Session Fixation
+        - "10011" # Insecure cookies
+        
+        # API specific
+        - "40039" # Web Cache Deception
+        - "90019" # Server Side Include
+
+      # Regras menos relevantes para SPAs (desabilitar)
+      disabledRules:
+        - "10015" # Cache headers (não crítico para SPAs)
+        - "10020" # X-Frame-Options (CSP é mais moderno)
+        - "10021" # X-Content-Type-Options
+        - "10049" # Content Cacheability
+        - "2" # Private IP disclosure
+        - "10096" # Timestamp
+        - "10094" # Base64
+        
+      # Thresholds ajustados para SPAs
+      ruleConfigs:
+        - id: "40026" # DOM XSS
+          threshold: "LOW" # Mais sensível para DOM XSS
+          strength: "HIGH"
+        - id: "40040" # CORS
+          threshold: "MEDIUM"
+          strength: "MEDIUM"
+        - id: "10055" # CSP
+          threshold: "MEDIUM"
+          strength: "LOW"
+
+  # 9. Teste específico de APIs REST
+  - type: "openapi"
+    parameters:
+      context: "spa-application"
+      apiUrl: "${API_BASE_URL}/swagger.json"
+      targetUrl: "${API_BASE_URL}"
+
+  # 10. Relatórios específicos para SPAs
+  - type: "report"
+    parameters:
+      template: "traditional-json-plus"
+      reportDir: "/zap/wrk/reports"
+      reportFile: "spa-security-report-${timestamp}"
+      reportTitle: "SPA Security Assessment - ${SPA_BASE_URL}"
+      reportDescription: "Security testing results for Single Page Application including DOM-based vulnerabilities, API security, and client-side issues"
+      displayReport: false
+      
+      # Seções específicas para relatório SPA
+      sections:
+        - name: "dom-vulnerabilities"
+          title: "DOM-Based Vulnerabilities"
+          description: "Client-side security issues"
+        - name: "api-security"
+          title: "API Security"
+          description: "Backend API vulnerabilities"
+        - name: "cors-csp"
+          title: "CORS & CSP Configuration"
+          description: "Cross-origin and content security policies"
+
+# Configuração para diferentes tipos de SPA
+spaTypes:
+  react:
+    specificElements: ".react-root,#root,[data-reactroot]"
+    waitForElement: "[data-reactroot]"
+    excludePaths:
+      - ".*\\.chunk\\.js$"
+      - ".*react-dom.*"
+      
+  angular:
+    specificElements: "app-root,ng-component,[ng-version]"
+    waitForElement: "app-root"
+    excludePaths:
+      - ".*\\.chunk\\.js$"
+      - ".*@angular.*"
+      
+  vue:
+    specificElements: "#app,[data-server-rendered=true]"
+    waitForElement: "#app"
+    excludePaths:
+      - ".*\\.chunk\\.js$"
+      - ".*vue\\.js$"

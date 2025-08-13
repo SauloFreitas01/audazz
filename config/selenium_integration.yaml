@@ -1,0 +1,675 @@
+# OWASP ZAP - Integração com Selenium/Playwright
+# Arquivo: selenium_integration.yaml
+# Versão: 1.0
+# Descrição: Configurações avançadas para integração com automation frameworks
+
+# =============================================================================
+# CONFIGURAÇÃO SELENIUM WEBDRIVER
+# =============================================================================
+selenium_config:
+  grid:
+    hub_url: "http://selenium-hub:4444/wd/hub"
+    max_sessions: 4
+    session_timeout: 300
+    browser_timeout: 300
+    
+  browsers:
+    chrome:
+      version: "latest"
+      options:
+        - "--no-sandbox"
+        - "--disable-dev-shm-usage"
+        - "--disable-gpu"
+        - "--disable-extensions"
+        - "--disable-default-apps"
+        - "--disable-background-timer-throttling"
+        - "--disable-backgrounding-occluded-windows"
+        - "--disable-renderer-backgrounding"
+        - "--disable-features=TranslateUI"
+        - "--window-size=1920,1080"
+        - "--start-maximized"
+      
+    firefox:
+      version: "latest"
+      options:
+        - "--width=1920"
+        - "--height=1080"
+        - "--no-sandbox"
+      preferences:
+        "dom.webnotifications.enabled": false
+        "dom.push.enabled": false
+
+# =============================================================================
+# ZAP COMO PROXY PARA SELENIUM
+# =============================================================================
+zap_proxy_config:
+  host: "zap"
+  port: 8080
+  
+  # Configurações do proxy
+  proxy_settings:
+    http_proxy: "http://zap:8080"
+    https_proxy: "http://zap:8080"
+    ssl_verify: false
+    
+  # Certificado ZAP para HTTPS
+  certificate:
+    generate_ca: true
+    install_ca: true
+    ca_cert_path: "/zap/wrk/owasp_zap_root_ca.cer"
+
+# =============================================================================
+# SCRIPTS DE AUTOMAÇÃO SELENIUM
+# =============================================================================
+selenium_scripts:
+  
+  # Script para login e navegação básica
+  basic_authentication:
+    language: "python"
+    description: "Script básico de autenticação via Selenium"
+    script: |
+      from selenium import webdriver
+      from selenium.webdriver.common.by import By
+      from selenium.webdriver.support.ui import WebDriverWait
+      from selenium.webdriver.support import expected_conditions as EC
+      from selenium.webdriver.chrome.options import Options
+      import time
+      import os
+      
+      def setup_driver_with_zap_proxy():
+          chrome_options = Options()
+          chrome_options.add_argument("--proxy-server=http://zap:8080")
+          chrome_options.add_argument("--ignore-ssl-errors")
+          chrome_options.add_argument("--ignore-certificate-errors")
+          chrome_options.add_argument("--allow-running-insecure-content")
+          chrome_options.add_argument("--disable-web-security")
+          chrome_options.add_argument("--headless")
+          
+          driver = webdriver.Remote(
+              command_executor="http://selenium-hub:4444/wd/hub",
+              options=chrome_options
+          )
+          return driver
+      
+      def authenticate_and_navigate():
+          driver = setup_driver_with_zap_proxy()
+          wait = WebDriverWait(driver, 10)
+          
+          try:
+              # Navegar para página de login
+              driver.get(os.environ.get("LOGIN_URL", "https://example.com/login"))
+              
+              # Aguardar carregamento
+              wait.until(EC.presence_of_element_located((By.NAME, "username")))
+              
+              # Realizar login
+              driver.find_element(By.NAME, "username").send_keys(os.environ.get("AUTH_USER"))
+              driver.find_element(By.NAME, "password").send_keys(os.environ.get("AUTH_PASS"))
+              driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+              
+              # Aguardar redirecionamento
+              wait.until(EC.url_contains("dashboard"))
+              
+              # Navegar por seções principais
+              sections = ["profile", "settings", "data", "reports"]
+              for section in sections:
+                  try:
+                      link = wait.until(EC.element_to_be_clickable((By.LINK_TEXT, section)))
+                      link.click()
+                      time.sleep(3)  # Aguardar carregamento
+                      
+                      # Voltar para dashboard
+                      home_link = driver.find_element(By.CSS_SELECTOR, ".home-link, .dashboard-link")
+                      home_link.click()
+                      time.sleep(2)
+                  except:
+                      continue
+              
+              return True
+              
+          finally:
+              driver.quit()
+
+  # Script para SPA React com roteamento client-side
+  react_spa_navigation:
+    language: "python"
+    description: "Navegação específica para React SPAs"
+    script: |
+      from selenium import webdriver
+      from selenium.webdriver.common.by import By
+      from selenium.webdriver.support.ui import WebDriverWait
+      from selenium.webdriver.support import expected_conditions as EC
+      from selenium.webdriver.chrome.options import Options
+      import time
+      import json
+      
+      def navigate_react_spa():
+          chrome_options = Options()
+          chrome_options.add_argument("--proxy-server=http://zap:8080")
+          chrome_options.add_argument("--headless")
+          
+          driver = webdriver.Remote(
+              command_executor="http://selenium-hub:4444/wd/hub",
+              options=chrome_options
+          )
+          
+          wait = WebDriverWait(driver, 15)
+          
+          try:
+              # Carregar aplicação React
+              driver.get(os.environ.get("SPA_BASE_URL"))
+              
+              # Aguardar React carregar
+              wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "[data-reactroot], #root")))
+              time.sleep(3)
+              
+              # Aguardar carregamento inicial
+              wait.until(lambda d: d.execute_script("return document.readyState === 'complete'"))
+              
+              # Detectar rotas automaticamente
+              routes = driver.execute_script("""
+                  // Tentar detectar rotas do React Router
+                  const links = Array.from(document.querySelectorAll('a[href^="/"], [routerlink], .nav-link'));
+                  return links.map(link => link.href || link.getAttribute('href')).filter(href => 
+                      href && !href.includes('logout') && !href.includes('external')
+                  );
+              """)
+              
+              # Navegar por rotas detectadas
+              for route in routes[:10]:  # Limitar a 10 rotas
+                  try:
+                      driver.get(route)
+                      time.sleep(4)  # Aguardar SPA re-render
+                      
+                      # Aguardar AJAX calls completarem
+                      wait.until(lambda d: d.execute_script("""
+                          return window.jQuery ? jQuery.active == 0 : true;
+                      """))
+                      
+                      # Interagir com elementos da página
+                      clickable_elements = driver.find_elements(By.CSS_SELECTOR, 
+                          "button:not([disabled]), .btn:not([disabled]), [role='button']:not([disabled])")
+                      
+                      for element in clickable_elements[:3]:  # Máximo 3 cliques por página
+                          try:
+                              if element.is_displayed() and element.is_enabled():
+                                  driver.execute_script("arguments[0].click();", element)
+                                  time.sleep(2)
+                          except:
+                              continue
+                              
+                  except Exception as e:
+                      print(f"Erro ao navegar para {route}: {e}")
+                      continue
+              
+          finally:
+              driver.quit()
+
+  # Script para e-commerce com carrinho de compras
+  ecommerce_flow:
+    language: "python"
+    description: "Fluxo de e-commerce sem processar pagamento real"
+    script: |
+      def ecommerce_user_flow():
+          driver = setup_driver_with_zap_proxy()
+          wait = WebDriverWait(driver, 10)
+          
+          try:
+              # 1. Navegar para loja
+              driver.get(os.environ.get("TARGET_URL"))
+              
+              # 2. Buscar produtos
+              search_box = wait.until(EC.presence_of_element_located((By.NAME, "search")))
+              search_box.send_keys("test product")
+              search_box.submit()
+              time.sleep(3)
+              
+              # 3. Adicionar produto ao carrinho
+              add_to_cart = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".add-to-cart, .btn-add-cart")))
+              add_to_cart.click()
+              time.sleep(2)
+              
+              # 4. Visualizar carrinho
+              cart_link = driver.find_element(By.CSS_SELECTOR, ".cart-link, .shopping-cart")
+              cart_link.click()
+              time.sleep(3)
+              
+              # 5. Ir para checkout (mas não finalizar)
+              checkout_btn = driver.find_element(By.CSS_SELECTOR, ".checkout, .btn-checkout")
+              checkout_btn.click()
+              time.sleep(3)
+              
+              # 6. Preencher dados fictícios (não finalizar compra)
+              if driver.find_elements(By.NAME, "email"):
+                  driver.find_element(By.NAME, "email").send_keys("test@example.com")
+              if driver.find_elements(By.NAME, "phone"):
+                  driver.find_element(By.NAME, "phone").send_keys("1234567890")
+              
+              # IMPORTANTE: NÃO prosseguir com pagamento real
+              print("Fluxo de e-commerce executado sem finalizar compra")
+              
+          finally:
+              driver.quit()
+
+# =============================================================================
+# CONFIGURAÇÃO PLAYWRIGHT (ALTERNATIVA AO SELENIUM)
+# =============================================================================
+playwright_config:
+  description: "Configuração para usar Playwright como alternativa ao Selenium"
+  
+  # Docker service para Playwright
+  docker_service:
+    image: "mcr.microsoft.com/playwright:v1.40.0-focal"
+    environment:
+      - ZAP_PROXY=http://zap:8080
+    
+  # Script Python com Playwright
+  automation_script: |
+    from playwright.sync_api import sync_playwright
+    import os
+    import time
+    
+    def run_playwright_with_zap():
+        with sync_playwright() as p:
+            # Configurar proxy ZAP
+            browser = p.chromium.launch(
+                headless=True,
+                proxy={
+                    "server": "http://zap:8080",
+                    "bypass": "localhost,127.0.0.1"
+                },
+                args=[
+                    "--ignore-ssl-errors",
+                    "--ignore-certificate-errors",
+                    "--allow-running-insecure-content",
+                    "--disable-web-security"
+                ]
+            )
+            
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1920, "height": 1080}
+            )
+            
+            page = context.new_page()
+            
+            try:
+                # Navegar para aplicação
+                page.goto(os.environ.get("TARGET_URL"))
+                
+                # Aguardar carregamento
+                page.wait_for_load_state("networkidle")
+                
+                # Executar fluxos específicos baseados no tipo de app
+                app_type = os.environ.get("APP_TYPE", "generic")
+                
+                if app_type == "spa":
+                    navigate_spa_routes(page)
+                elif app_type == "ecommerce":
+                    ecommerce_flow(page)
+                elif app_type == "api-docs":
+                    explore_api_documentation(page)
+                else:
+                    generic_navigation(page)
+                    
+            finally:
+                browser.close()
+    
+    def navigate_spa_routes(page):
+        # Detectar e navegar por rotas SPA
+        routes = page.evaluate("""
+            Array.from(document.querySelectorAll('a[href^="/"]'))
+                .map(a => a.href)
+                .filter(href => !href.includes('logout'))
+                .slice(0, 10)
+        """)
+        
+        for route in routes:
+            try:
+                page.goto(route)
+                page.wait_for_load_state("networkidle")
+                time.sleep(2)
+                
+                # Interagir com elementos
+                buttons = page.query_selector_all("button:not([disabled])")
+                for i, button in enumerate(buttons[:3]):
+                    try:
+                        button.click()
+                        page.wait_for_load_state("networkidle")
+                        time.sleep(1)
+                    except:
+                        continue
+                        
+            except Exception as e:
+                print(f"Erro navegando {route}: {e}")
+
+# =============================================================================
+# AUTOMAÇÃO AVANÇADA PARA FLUXOS COMPLEXOS
+# =============================================================================
+advanced_automation:
+  
+  # Configuração para aplicações com múltiplos tenants
+  multi_tenant:
+    description: "Configuração para aplicações SaaS multi-tenant"
+    automation_plan:
+      env:
+        contexts:
+          - name: "tenant-a"
+            url: "https://tenant-a.saas.example.com"
+            authentication:
+              method: "form"
+              loginUrl: "https://tenant-a.saas.example.com/login"
+              
+          - name: "tenant-b"
+            url: "https://tenant-b.saas.example.com"
+            authentication:
+              method: "form"
+              loginUrl: "https://tenant-b.saas.example.com/login"
+      
+      jobs:
+        - type: "selenium"
+          parameters:
+            scripts:
+              - name: "multi-tenant-test"
+                script: |
+                  # Testar isolamento entre tenants
+                  for tenant in ["tenant-a", "tenant-b"]:
+                      driver.get(f"https://{tenant}.saas.example.com")
+                      # Realizar login específico do tenant
+                      # Verificar acesso apenas aos dados do tenant
+
+  # Configuração para Single Sign-On (SSO)
+  sso_integration:
+    description: "Configuração para aplicações com SSO (SAML, OAuth2)"
+    automation_plan:
+      env:
+        contexts:
+          - name: "sso-app"
+            url: "https://app.example.com"
+            authentication:
+              method: "oauth2"
+              tokenEndpoint: "https://auth.example.com/oauth/token"
+              clientId: "${OAUTH_CLIENT_ID}"
+              clientSecret: "${OAUTH_CLIENT_SECRET}"
+              scope: "read write"
+      
+      jobs:
+        - type: "selenium"
+          parameters:
+            scripts:
+              - name: "oauth-flow"
+                script: |
+                  # Simular fluxo OAuth2
+                  driver.get("https://app.example.com")
+                  
+                  # Clique em "Login with SSO"
+                  sso_button = wait.until(EC.element_to_be_clickable((By.ID, "sso-login")))
+                  sso_button.click()
+                  
+                  # Aguardar redirecionamento para provider
+                  wait.until(EC.url_contains("auth.example.com"))
+                  
+                  # Realizar autenticação no provider
+                  driver.find_element(By.ID, "username").send_keys(os.environ["SSO_USER"])
+                  driver.find_element(By.ID, "password").send_keys(os.environ["SSO_PASS"])
+                  driver.find_element(By.ID, "submit").click()
+                  
+                  # Aguardar callback e redirecionamento
+                  wait.until(EC.url_contains("app.example.com"))
+
+  # Configuração para Progressive Web Apps (PWA)
+  pwa_testing:
+    description: "Configuração específica para PWAs"
+    automation_plan:
+      env:
+        contexts:
+          - name: "pwa-app"
+            url: "https://pwa.example.com"
+            
+      jobs:
+        - type: "selenium"
+          parameters:
+            scripts:
+              - name: "pwa-features"
+                script: |
+                  # Testar funcionalidades PWA
+                  driver.get("https://pwa.example.com")
+                  
+                  # Verificar service worker
+                  sw_registered = driver.execute_script("""
+                      return 'serviceWorker' in navigator && 
+                             navigator.serviceWorker.controller !== null;
+                  """)
+                  
+                  # Testar funcionalidade offline (se aplicável)
+                  if sw_registered:
+                      # Simular perda de conectividade
+                      driver.execute_cdp_cmd("Network.enable", {})
+                      driver.execute_cdp_cmd("Network.emulateNetworkConditions", {
+                          "offline": True,
+                          "latency": 0,
+                          "downloadThroughput": 0,
+                          "uploadThroughput": 0
+                      })
+                      
+                      # Navegar e verificar funcionalidade offline
+                      driver.refresh()
+                      time.sleep(3)
+                      
+                      # Restaurar conectividade
+                      driver.execute_cdp_cmd("Network.emulateNetworkConditions", {
+                          "offline": False,
+                          "latency": 0,
+                          "downloadThroughput": -1,
+                          "uploadThroughput": -1
+                      })
+
+# =============================================================================
+# CONFIGURAÇÃO PARA DIFERENTES FRAMEWORKS SPA
+# =============================================================================
+spa_frameworks:
+  
+  react:
+    name: "React Application"
+    wait_strategies:
+      initial_load: "[data-reactroot], #root"
+      navigation: "return window.React !== undefined"
+      ajax_complete: "return fetch.mockedByZAP || window.jQuery ? jQuery.active === 0 : true"
+    
+    selenium_config:
+      wait_conditions:
+        - type: "presence_of_element"
+          locator: "[data-reactroot]"
+        - type: "javascript"
+          script: "return window.React !== undefined"
+      
+      navigation_strategy: |
+        # Detectar React Router links
+        react_links = driver.find_elements(By.CSS_SELECTOR, "a[href^='/'], [routerlink]")
+        
+        for link in react_links:
+            href = link.get_attribute("href")
+            if href and not any(exclude in href for exclude in ['logout', 'external']):
+                driver.get(href)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "[data-reactroot]")))
+                time.sleep(3)
+
+  angular:
+    name: "Angular Application"
+    wait_strategies:
+      initial_load: "app-root, [ng-version]"
+      navigation: "return window.ng !== undefined"
+      ajax_complete: "return window.getAllAngularTestabilities().findIndex(x => !x.isStable()) === -1"
+    
+    selenium_config:
+      wait_conditions:
+        - type: "presence_of_element"
+          locator: "app-root"
+        - type: "javascript"
+          script: "return window.ng !== undefined"
+      
+      navigation_strategy: |
+        # Angular Router navigation
+        angular_links = driver.find_elements(By.CSS_SELECTOR, "a[routerlink], a[href^='/']")
+        
+        for link in angular_links:
+            try:
+                driver.execute_script("arguments[0].click();", link)
+                
+                # Aguardar Angular stabilizar
+                wait.until(lambda d: d.execute_script("""
+                    return window.getAllAngularTestabilities().every(t => t.isStable());
+                """))
+                time.sleep(2)
+            except:
+                continue
+
+  vue:
+    name: "Vue.js Application"
+    wait_strategies:
+      initial_load: "#app, [data-server-rendered]"
+      navigation: "return window.Vue !== undefined"
+      ajax_complete: "return document.querySelector('#app').__vue__.$el"
+    
+    selenium_config:
+      wait_conditions:
+        - type: "presence_of_element"
+          locator: "#app"
+        - type: "javascript"
+          script: "return window.Vue !== undefined"
+
+# =============================================================================
+# CONFIGURAÇÕES DE PERFORMANCE
+# =============================================================================
+performance_optimization:
+  
+  # Para aplicações grandes
+  large_applications:
+    spider_config:
+      maxDuration: 30
+      maxChildren: 20
+      maxDepth: 8
+      threadCount: 5
+    
+    ajax_spider_config:
+      maxDuration: 45
+      numberOfBrowsers: 3
+      maxCrawlDepth: 12
+    
+    active_scan_config:
+      maxScanDurationInMins: 90
+      threadPerHost: 4
+      hostPerScan: 10
+
+  # Para aplicações pequenas/médias
+  medium_applications:
+    spider_config:
+      maxDuration: 15
+      maxChildren: 10
+      maxDepth: 5
+      threadCount: 3
+    
+    ajax_spider_config:
+      maxDuration: 20
+      numberOfBrowsers: 2
+      maxCrawlDepth: 8
+    
+    active_scan_config:
+      maxScanDurationInMins: 45
+      threadPerHost: 2
+      hostPerScan: 5
+
+  # Para CI/CD (rápido)
+  ci_cd_optimized:
+    spider_config:
+      maxDuration: 5
+      maxChildren: 5
+      maxDepth: 3
+      threadCount: 2
+    
+    ajax_spider_config:
+      maxDuration: 10
+      numberOfBrowsers: 1
+      maxCrawlDepth: 5
+    
+    active_scan_config:
+      maxScanDurationInMins: 15
+      threadPerHost: 1
+      hostPerScan: 3
+
+# =============================================================================
+# TROUBLESHOOTING E DEBUG
+# =============================================================================
+debug_configurations:
+  
+  # Configuração para debug de Selenium
+  selenium_debug:
+    grid_config:
+      enable_video: true
+      enable_vnc: true
+      screen_resolution: "1920x1080x24"
+      
+    logging:
+      level: "DEBUG"
+      selenium_log: "/zap/wrk/selenium-debug.log"
+      zap_log: "/zap/wrk/zap-debug.log"
+  
+  # Configuração para debug de AJAX Spider
+  ajax_debug:
+    browser_options:
+      - "--enable-logging"
+      - "--log-level=0"
+      - "--v=1"
+      - "--enable-features=NetworkService,NetworkServiceLogging"
+    
+    zap_options:
+      ajax_debug: true
+      click_elements_once: false
+      event_wait: 3000
+      reload_wait: 5000
+
+# =============================================================================
+# EXEMPLOS DE COMANDO
+# =============================================================================
+command_examples:
+  
+  # React SPA com autenticação JWT
+  react_with_jwt: |
+    TARGET_URL=https://app.example.com \
+    SPA_BASE_URL=https://app.example.com \
+    API_BASE_URL=https://api.example.com \
+    JWT_TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9... \
+    ./run_zap_automation.sh spa
+  
+  # E-commerce com autenticação
+  ecommerce_scan: |
+    TARGET_URL=https://shop.example.com \
+    AUTH_USER=customer@example.com \
+    AUTH_PASS=password123 \
+    LOGIN_URL=https://shop.example.com/customer/login \
+    APP_TYPE=ecommerce \
+    ./run_zap_automation.sh standard
+  
+  # API REST com OpenAPI spec
+  api_with_swagger: |
+    TARGET_URL=https://api.example.com \
+    API_TOKEN=sk-1234567890abcdef \
+    SWAGGER_URL=https://api.example.com/swagger.json \
+    ./run_zap_automation.sh standard rest_api_config.yaml
+  
+  # WordPress com Docker Compose
+  wordpress_docker: |
+    TARGET_URL=https://blog.example.com \
+    WP_USER=admin \
+    WP_PASS=admin123 \
+    docker-compose --profile zap-only up
+  
+  # Microserviços com múltiplos contextos
+  microservices_scan: |
+    USER_SERVICE_URL=https://users.microservices.com \
+    ORDER_SERVICE_URL=https://orders.microservices.com \
+    PAYMENT_SERVICE_URL=https://payments.microservices.com \
+    USER_SERVICE_TOKEN=token1 \
+    ORDER_SERVICE_TOKEN=token2 \
+    PAYMENT_SERVICE_TOKEN=token3 \
+    ./run_zap_automation.sh standard microservices_config.yaml

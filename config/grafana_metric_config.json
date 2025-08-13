@@ -1,0 +1,430 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "OWASP ZAP Security Metrics",
+    "tags": ["security", "zap", "owasp"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Vulnerabilidades por Criticidade",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "zap_vulnerabilities_total",
+            "legendFormat": "{{risk_level}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "pieType": "pie",
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          },
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "values": []
+          },
+          "displayLabels": ["name", "value"]
+        }
+      },
+      {
+        "id": 2,
+        "title": "Tendência de Vulnerabilidades ao Longo do Tempo",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "zap_vulnerabilities_total{risk_level=\"High\"}",
+            "legendFormat": "Alto Risco",
+            "refId": "A"
+          },
+          {
+            "expr": "zap_vulnerabilities_total{risk_level=\"Medium\"}",
+            "legendFormat": "Médio Risco",
+            "refId": "B"
+          },
+          {
+            "expr": "zap_vulnerabilities_total{risk_level=\"Low\"}",
+            "legendFormat": "Baixo Risco",
+            "refId": "C"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "xAxis": {
+          "mode": "time",
+          "name": "",
+          "values": [],
+          "show": true
+        },
+        "yAxes": [
+          {
+            "label": "Número de Vulnerabilidades",
+            "max": null,
+            "min": 0,
+            "show": true
+          }
+        ],
+        "lines": true,
+        "fill": 1,
+        "linewidth": 2,
+        "points": false,
+        "pointradius": 2,
+        "bars": false,
+        "stack": false,
+        "percentage": false,
+        "legend": {
+          "avg": false,
+          "current": false,
+          "max": false,
+          "min": false,
+          "show": true,
+          "total": false,
+          "values": false
+        },
+        "nullPointMode": "null",
+        "aliasColors": {
+          "Alto Risco": "red",
+          "Médio Risco": "orange",
+          "Baixo Risco": "yellow"
+        }
+      },
+      {
+        "id": 3,
+        "title": "Status dos Scans",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "zap_scan_status",
+            "legendFormat": "{{target_url}}"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 8
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "options": {
+                  "0": {
+                    "text": "FAILED",
+                    "color": "red"
+                  },
+                  "1": {
+                    "text": "SUCCESS",
+                    "color": "green"
+                  }
+                },
+                "type": "value"
+              }
+            ],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Duração dos Scans",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "zap_scan_duration_seconds",
+            "legendFormat": "{{target_url}}"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 8
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 1800
+                },
+                {
+                  "color": "red",
+                  "value": 3600
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Top 10 Vulnerabilidades Mais Frequentes",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "topk(10, sum by (vulnerability_name) (zap_vulnerability_count))",
+            "format": "table",
+            "legendFormat": "{{vulnerability_name}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "options": {
+          "showHeader": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "width": null,
+              "displayMode": "auto"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 5
+                }
+              ]
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 6,
+        "title": "Comparação Entre Ambientes",
+        "type": "barchart",
+        "targets": [
+          {
+            "expr": "sum by (environment, risk_level) (zap_vulnerabilities_by_environment)",
+            "legendFormat": "{{environment}} - {{risk_level}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        },
+        "options": {
+          "orientation": "horizontal",
+          "barWidth": 0.97,
+          "groupWidth": 0.7,
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        }
+      }
+    ],
+    "time": {
+      "from": "now-30d",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          },
+          "datasource": "prometheus",
+          "definition": "label_values(zap_vulnerabilities_total, target_url)",
+          "hide": 0,
+          "includeAll": true,
+          "label": null,
+          "multi": true,
+          "name": "target_url",
+          "options": [],
+          "query": {
+            "query": "label_values(zap_vulnerabilities_total, target_url)",
+            "refId": "StandardVariableQuery"
+          },
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 0,
+          "type": "query"
+        },
+        {
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          },
+          "datasource": "prometheus",
+          "definition": "label_values(zap_vulnerabilities_total, environment)",
+          "hide": 0,
+          "includeAll": true,
+          "label": null,
+          "multi": true,
+          "name": "environment",
+          "options": [],
+          "query": {
+            "query": "label_values(zap_vulnerabilities_total, environment)",
+            "refId": "StandardVariableQuery"
+          },
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 0,
+          "type": "query"
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "refresh": "30s",
+    "schemaVersion": 30,
+    "version": 1,
+    "links": []
+  },
+  
+  "datasource_config": {
+    "name": "prometheus",
+    "type": "prometheus",
+    "url": "http://prometheus:9090",
+    "access": "proxy",
+    "isDefault": true
+  },
+
+  "alert_rules": [
+    {
+      "alert": "ZAP High Risk Vulnerabilities",
+      "expr": "zap_vulnerabilities_total{risk_level=\"High\"} > 0",
+      "for": "0m",
+      "labels": {
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "Vulnerabilidades de alto risco detectadas",
+        "description": "{{ $value }} vulnerabilidades de alto risco foram encontradas em {{ $labels.target_url }}"
+      }
+    },
+    {
+      "alert": "ZAP Scan Failed",
+      "expr": "zap_scan_status == 0",
+      "for": "5m",
+      "labels": {
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "Falha no scan de segurança",
+        "description": "O scan de segurança falhou para {{ $labels.target_url }}"
+      }
+    },
+    {
+      "alert": "ZAP Scan Duration Too Long",
+      "expr": "zap_scan_duration_seconds > 3600",
+      "for": "0m",
+      "labels": {
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "Scan de segurança muito longo",
+        "description": "O scan para {{ $labels.target_url }} demorou {{ $value }} segundos (mais de 1 hora)"
+      }
+    }
+  ],
+
+  "prometheus_config": {
+    "scrape_configs": [
+      {
+        "job_name": "zap-metrics",
+        "static_configs": [
+          {
+            "targets": ["localhost:9090"]
+          }
+        ],
+        "scrape_interval": "30s",
+        "metrics_path": "/metrics"
+      }
+    ]
+  }
+}
