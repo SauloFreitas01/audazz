@@ -1,0 +1,229 @@
+# OWASP ZAP - Configuração de Políticas Otimizadas
+# Versão: 1.0
+# Descrição: Configurações específicas para otimizar varreduras e reduzir falsos positivos
+
+
+policy:
+  name: "custom-security-policy"
+  description: "Política otimizada para reduzir falsos positivos e focar em vulnerabilidades críticas"
+  
+  # Regras DESABILITADAS (informacionais e baixo risco)
+  disabledRules:
+    # Informational
+    - id: "10109"
+      name: "Insufficient Transport Layer Protection"
+      reason: "Informational apenas"
+    - id: "10049"
+      name: "Content Cacheability"
+      reason: "Baixo impacto de segurança"
+    - id: "10027"
+      name: "Information Disclosure - Suspicious Comments"
+      reason: "Muitos falsos positivos"
+    - id: "10015"
+      name: "Incomplete or No Cache-control Header Set"
+      reason: "Informational"
+    - id: "10096"
+      name: "Timestamp Disclosure"
+      reason: "Baixo risco"
+    - id: "10094"
+      name: "Base64 Disclosure"
+      reason: "Falsos positivos frequentes"
+    - id: "10017"
+      name: "Cross-Domain JavaScript Source File Inclusion"
+      reason: "Comportamento normal em SPAs"
+    - id: "10021"
+      name: "X-Content-Type-Options Header Missing"
+      reason: "Hardening, não vulnerabilidade crítica"
+    - id: "10020"
+      name: "X-Frame-Options Header Scanner"
+      reason: "Hardening, não vulnerabilidade crítica"
+    - id: "10016"
+      name: "Web Browser XSS Protection Not Enabled"
+      reason: "Header descontinuado pelos browsers"
+    - id: "10098"
+      name: "Cross-Domain Misconfiguration"
+      reason: "Falsos positivos em APIs modernas"
+    - id: "10047"
+      name: "HTTPS Content Available via HTTP"
+      reason: "Verificação de infraestrutura"
+    - id: "2"
+      name: "Private IP Disclosure"
+      reason: "Falsos positivos em headers padrão"
+
+  # Regras ATIVAS com thresholds customizados
+  activeRules:
+    # === OWASP TOP 10 2021 === #
+    
+    # A01:2021 - Broken Access Control
+    - id: "40026"
+      name: "Cross Site Scripting (DOM Based)"
+      threshold: "MEDIUM"
+      strength: "MEDIUM"
+      
+    # A02:2021 - Cryptographic Failures
+    - id: "90019"
+      name: "Server Side Include"
+      threshold: "HIGH"
+      strength: "HIGH"
+      
+    # A03:2021 - Injection
+    - id: "40018"
+      name: "SQL Injection"
+      threshold: "HIGH"
+      strength: "HIGH"
+    - id: "40019"
+      name: "SQL Injection - MySQL"
+      threshold: "HIGH"
+      strength: "HIGH"
+    - id: "40020"
+      name: "SQL Injection - Hypersonic SQL"
+      threshold: "HIGH"
+      strength: "HIGH"
+    - id: "40021"
+      name: "SQL Injection - Oracle"
+      threshold: "HIGH"
+      strength: "HIGH"
+    - id: "40022"
+      name: "SQL Injection - PostgreSQL"
+      threshold: "HIGH"
+      strength: "HIGH"
+    - id: "90020"
+      name: "Remote OS Command Injection"
+      threshold: "HIGH"
+      strength: "HIGH"
+    - id: "7"
+      name: "Remote File Inclusion"
+      threshold: "HIGH"
+      strength: "HIGH"
+    - id: "6"
+      name: "Path Traversal"
+      threshold: "HIGH"
+      strength: "HIGH"
+      
+    # A04:2021 - Insecure Design
+    - id: "40014"
+      name: "Cross Site Scripting (Persistent)"
+      threshold: "MEDIUM"
+      strength: "MEDIUM"
+    - id: "40016"
+      name: "Cross Site Scripting (Persistent) - Prime"
+      threshold: "MEDIUM"
+      strength: "MEDIUM"
+    - id: "40012"
+      name: "Cross Site Scripting (Reflected)"
+      threshold: "MEDIUM"
+      strength: "MEDIUM"
+      
+    # A05:2021 - Security Misconfiguration
+    - id: "40009"
+      name: "Server Side Code Injection"
+      threshold: "HIGH"
+      strength: "HIGH"
+    - id: "90033"
+      name: "Loosely Scoped Cookie"
+      threshold: "MEDIUM"
+      strength: "LOW"
+      
+    # A06:2021 - Vulnerable and Outdated Components
+    - id: "10104"
+      name: "User Agent Fuzzer"
+      threshold: "HIGH"
+      strength: "LOW"
+      
+    # A07:2021 - Identification and Authentication Failures
+    - id: "40013"
+      name: "Session Fixation"
+      threshold: "HIGH"
+      strength: "MEDIUM"
+    - id: "10011"
+      name: "Cookie Without Secure Flag"
+      threshold: "MEDIUM"
+      strength: "LOW"
+    - id: "10012"
+      name: "Password Autocomplete in Browser"
+      threshold: "MEDIUM"
+      strength: "LOW"
+      
+    # A08:2021 - Software and Data Integrity Failures
+    - id: "90001"
+      name: "Insecure JSF ViewState"
+      threshold: "HIGH"
+      strength: "MEDIUM"
+      
+    # A09:2021 - Security Logging and Monitoring Failures
+    - id: "40025"
+      name: "Proxy Disclosure"
+      threshold: "MEDIUM"
+      strength: "LOW"
+      
+    # A10:2021 - Server-Side Request Forgery (SSRF)
+    - id: "40009"
+      name: "Server Side Code Injection"
+      threshold: "HIGH"
+      strength: "HIGH"
+
+  # Configurações específicas para reduzir tempo de scan
+  performanceOptimization:
+    maxScanTimePerRule: 300 # 5 minutos por regra
+    maxRequestsPerRule: 100
+    skipSlowRules: false
+    
+    # Regras que podem ser mais lentas - ajustar strength
+    slowRules:
+      - id: "40018" # SQL Injection
+        maxRequests: 50
+        timeout: 180
+      - id: "90020" # Command Injection  
+        maxRequests: 30
+        timeout: 120
+      - id: "7" # Remote File Inclusion
+        maxRequests: 25
+        timeout: 90
+
+# Configuração para diferentes ambientes
+environments:
+  production:
+    # Mais conservador em produção
+    defaultThreshold: "HIGH"
+    defaultStrength: "LOW"
+    maxScanDuration: 1800 # 30 minutos
+    
+  staging:
+    # Mais agressivo em staging
+    defaultThreshold: "MEDIUM"
+    defaultStrength: "MEDIUM"
+    maxScanDuration: 3600 # 1 hora
+    
+  development:
+    # Máxima cobertura em dev
+    defaultThreshold: "LOW"
+    defaultStrength: "HIGH"
+    maxScanDuration: 7200 # 2 horas
+
+# Exclusões globais para reduzir ruído
+globalExclusions:
+  # Arquivos estáticos
+  - pattern: ".*\\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$"
+    reason: "Arquivos estáticos sem lógica de negócio"
+  
+  # Endpoints de saúde e métricas
+  - pattern: ".*/health.*"
+    reason: "Endpoints de monitoramento"
+  - pattern: ".*/metrics.*"
+    reason: "Endpoints de métricas"
+  - pattern: ".*/actuator.*"
+    reason: "Spring Boot actuator"
+    
+  # Logout e autenticação
+  - pattern: ".*/logout.*"
+    reason: "Evitar logout durante scan"
+  - pattern: ".*/signout.*"
+    reason: "Evitar logout durante scan"
+    
+  # APIs de terceiros
+  - pattern: ".*googleapis\\.com.*"
+    reason: "APIs externas"
+  - pattern: ".*facebook\\.com.*"
+    reason: "APIs externas"
+  - pattern: ".*twitter\\.com.*"
+    reason: "APIs externas"

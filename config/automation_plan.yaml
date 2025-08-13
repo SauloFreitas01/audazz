@@ -1,0 +1,204 @@
+# Descrição: Configuração completa para automação de security testing com OWASP ZAP
+env:
+  # Contextos para diferentes aplicações/ambientes
+  contexts:
+    - name: "production-web-app"
+      url: "${TARGET_URL}"
+      includePaths:
+        - "${TARGET_URL}/.*"
+      excludePaths:
+        - ".*logout.*"
+        - ".*\\.css"
+        - ".*\\.js"
+        - ".*\\.png"
+        - ".*\\.jpg"
+        - ".*\\.gif"
+        - ".*\\.ico"
+      authentication:
+        method: "form"
+        loginUrl: "${LOGIN_URL}"
+        username: "${AUTH_USER}"
+        password: "${AUTH_PASS}"
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "test-user"
+          username: "${AUTH_USER}"
+          password: "${AUTH_PASS}"
+
+    - name: "staging-api"
+      url: "${API_BASE_URL}"
+      includePaths:
+        - "${API_BASE_URL}/.*"
+      excludePaths:
+        - ".*health.*"
+        - ".*metrics.*"
+      authentication:
+        method: "bearer"
+        bearerToken: "${API_TOKEN}"
+
+  # Parâmetros globais
+  parameters:
+    zapHomeDir: "/zap/wrk"
+    zapConfigDir: "/zap/config"
+    reportDir: "/zap/wrk/reports"
+    maxScanTime: "30"
+    maxSpiderTime: "10"
+
+  # Add-ons necessários
+  addons:
+    - id: "ajaxspider"
+      action: "install"
+    - id: "selenium"
+      action: "install"
+    - id: "graphql"
+      action: "install"
+    - id: "openapi"
+      action: "install"
+
+# Jobs de execução sequencial
+jobs:
+  # 1. Configuração inicial
+  - type: "env"
+    parameters:
+      globalVariables:
+        TARGET_URL: "${TARGET_URL}"
+        MAX_DURATION: "1800" # 30 minutos
+
+  # 2. Import de contextos personalizados
+  - type: "context"
+    parameters:
+      context: "production-web-app"
+      includePaths:
+        - ${TARGET_URL}/.*"
+      excludePaths:
+        - ".*logout.*"
+        - ".*\\.css"
+        - ".*\\.js"
+        - ".*assets.*"
+
+  # 3. Spider tradicional - Descoberta de URLs
+  - type: "spider"
+    parameters:
+      context: "production-web-app"
+      url: "${TARGET_URL}"
+      maxDuration: 10
+      maxDepth: 5
+      maxChildren: 10
+      acceptCookies: true
+      handleODataParametersVisited: false
+      parseComments: true
+      parseRobotsTxt: true
+      parseSitemapXml: true
+
+  # 4. AJAX Spider - Para SPAs e conteúdo dinâmico
+  - type: "ajaxSpider"
+    parameters:
+      context: "production-web-app"
+      url: "${TARGET_URL}"
+      maxDuration: 10
+      maxCrawlDepth: 5
+      numberOfBrowsers: 1
+      inScopeOnly: true
+      clickDefaultElems: true
+      clickElemsOnce: true
+      randomInputs: true
+
+  # 5. Passive Scan - Análise passiva durante crawling
+  - type: "passiveScan-wait"
+    parameters:
+      maxDuration: 5
+
+  # 6. Active Scan - Testes de segurança ativos
+  - type: "activeScan"
+    parameters:
+      context: "production-web-app"
+      policy: "custom-security-policy"
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 25
+      addQueryParam: false
+      defaultPolicy: "Default Policy"
+      delayInMs: 0
+      handleAntiCSRFTokens: true
+      hostPerScan: 5
+      injectPluginIdInHeader: false
+      scanHeadersAllRequests: false
+      threadPerHost: 2
+
+  # 7. Configuração de políticas customizadas
+  - type: "activeScan-config"
+    parameters:
+      # Desabilitar regras informacionais e de baixo risco
+      disableRules:
+        - "10109" # Insufficient Transport Layer Protection
+        - "10049" # Content Cacheability
+        - "10027" # Information Disclosure - Suspicious Comments
+        - "10015" # Incomplete or No Cache-control Header Set
+        - "10096" # Timestamp Disclosure
+        - "10094" # Base64 Disclosure
+        - "10017" # Cross-Domain JavaScript Source File Inclusion
+        - "10021" # X-Content-Type-Options Header Missing
+        - "10020" # X-Frame-Options Header Scanner
+        - "10016" # Web Browser XSS Protection Not Enabled
+
+      # Configurar thresholds específicos
+      ruleConfigs:
+        # XSS - Medium threshold
+        - id: "40012" # Cross Site Scripting (Reflected)
+          threshold: "MEDIUM"
+        - id: "40014" # Cross Site Scripting (Persistent)
+          threshold: "MEDIUM"
+        - id: "40016" # Cross Site Scripting (Persistent) - Prime
+          threshold: "MEDIUM"
+        
+        # SQL Injection - High threshold
+        - id: "40018" # SQL Injection
+          threshold: "HIGH"
+        - id: "40019" # SQL Injection - MySQL
+          threshold: "HIGH"
+        - id: "40020" # SQL Injection - Hypersonic SQL
+          threshold: "HIGH"
+        - id: "40021" # SQL Injection - Oracle
+          threshold: "HIGH"
+        - id: "40022" # SQL Injection - PostgreSQL
+          threshold: "HIGH"
+
+        # OWASP Top 10 - Garantir que estejam ativos
+        - id: "90019" # Server Side Include
+          threshold: "MEDIUM"
+        - id: "90020" # Remote OS Command Injection
+          threshold: "HIGH"
+        - id: "7" # Remote File Inclusion
+          threshold: "HIGH"
+
+  # 8. Geração de relatórios
+  - type: "report"
+    parameters:
+      template: "traditional-json-plus"
+      reportDir: "/zap/wrk/reports"
+      reportFile: "zap-security-report-${timestamp}"
+      reportTitle: "Security Assessment Report - ${TARGET_URL}"
+      reportDescription: "Automated security testing results"
+      displayReport: false
+
+  # 9. Relatório adicional em HTML para revisão manual
+  - type: "report"
+    parameters:
+      template: "traditional-html-plus"
+      reportDir: "/zap/wrk/reports"
+      reportFile: "zap-security-report-${timestamp}"
+      reportTitle: "Security Assessment Report - ${TARGET_URL}"
+      reportDescription: "Automated security testing results - HTML version"
+      displayReport: false
+
+  # 10. Relatório em formato XML para integração com outras ferramentas
+  - type: "report"
+    parameters:
+      template: "traditional-xml"
+      reportDir: "/zap/wrk/reports"
+      reportFile: "zap-security-report-${timestamp}"
+      displayReport: false
+
+# Configurações de saída e logging
+outputSummary: true
+progressToStdout: true
