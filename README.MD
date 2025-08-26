@@ -1,488 +1,427 @@
-# 🔒 AUDAZZ - AUTOMATED DAST
+# DAST Continuous Monitoring System
 
-Framework para automação de testes de segurança usando OWASP ZAP via linha de comando e API, sem necessidade de interface gráfica.
+A comprehensive Dynamic Application Security Testing (DAST) monitoring platform designed for continuous security assessment of web applications and their subdomains. This system transforms the original CLI-based ZAP automation tool into an enterprise-grade monitoring solution with advanced features like subdomain discovery, Grafana dashboards, and SIEM integration.
 
-## 📋 Índice
+## 🚀 Features
 
-- [Características](#características)
-- [Pré-requisitos](#pré-requisitos)
-- [Instalação](#instalação)
-- [Configuração](#configuração)
-- [Uso Básico](#uso-básico)
-- [Tipos de Varredura](#tipos-de-varredura)
-- [Configurações Avançadas](#configurações-avançadas)
-- [Integração CI/CD](#integração-cicd)
-- [Monitoramento e Relatórios](#monitoramento-e-relatórios)
-- [Troubleshooting](#troubleshooting)
+### Core Capabilities
+- **Continuous DAST Scanning** - Automated security scans based on configurable schedules
+- **Multi-Target Management** - Monitor multiple domains and their subdomains simultaneously  
+- **Advanced Subdomain Discovery** - Automated discovery using multiple tools (subfinder, assetfinder, amass)
+- **Flexible Scheduling** - Priority-based scanning with cron-like scheduling
+- **Comprehensive Reporting** - Multiple output formats (JSON, HTML, XML, SARIF)
 
-## ✨ Características
+### Integration & Monitoring
+- **Grafana Dashboards** - Rich visualization and alerting capabilities
+- **SIEM/SOAR Integration** - Support for Splunk, Elasticsearch, Azure Sentinel, IBM QRadar
+- **Prometheus Metrics** - Detailed metrics collection and monitoring
+- **CI/CD Integration** - Quality gates and pipeline integration
+- **Real-time Notifications** - Slack, email, and webhook notifications
 
-- 🚀 **Automação Completa**: Execução via linha de comando sem interface gráfica
-- 🎯 **Múltiplos Tipos**: Suporte para SPAs, APIs REST, GraphQL, aplicações tradicionais
-- 🔧 **Configurável**: Políticas customizadas para reduzir falsos positivos
-- 📊 **Relatórios**: Múltiplos formatos (JSON, HTML, XML) para integração
-- 🐳 **Containerizado**: Execução via Docker com Selenium Grid para SPAs
-- 🔄 **CI/CD Ready**: Integração fácil com pipelines de deployment
-- 📈 **Métricas**: Processamento para Grafana e sistemas de monitoramento
+### Enterprise Features
+- **High Availability** - Docker Compose with PostgreSQL and Redis
+- **API Access** - RESTful API with authentication and role-based access
+- **Scalable Architecture** - Containerized with horizontal scaling support
+- **Data Retention** - Configurable report and data retention policies
+- **Security Controls** - API authentication, network restrictions, audit logging
 
-## 🛠 Pré-requisitos
+## 🏗️ Architecture
 
-### Básico
-- Docker 20.10+
-- Docker Compose 2.0+
-- Python 3.8+ (para processamento de relatórios)
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Web Dashboard │    │   API Gateway   │    │  DAST Monitor   │
+│    (Grafana)    │    │    (Nginx)      │    │   (Python)      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ├───────────────────────┼───────────────────────┤
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Prometheus    │    │   PostgreSQL    │    │     Redis       │
+│   (Metrics)     │    │   (Storage)     │    │   (Queuing)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                                            │
+         │              ┌─────────────────┐           │
+         └──────────────│  OWASP ZAP      │───────────┘
+                        │  (Scanning)     │
+                        └─────────────────┘
+```
 
-### Para SPAs com Selenium
-- 4GB+ de RAM disponível
-- Rede Docker configurada
+## 🛠️ Installation
 
-### Para integração CI/CD
-- Jenkins, GitLab CI, GitHub Actions, ou similar
-- Acesso ao registry Docker
+### Prerequisites
+- Docker and Docker Compose
+- 4GB+ RAM recommended
+- 50GB+ disk space for reports
+- Network access for subdomain discovery tools
 
-## 📦 Instalação
+### Quick Start
 
-### 1. Clone o repositório
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd audazz
+   ```
+
+2. **Configure environment variables**
+   ```bash
+   cp .env.example .env
+   # Edit .env file with your configuration
+   ```
+
+3. **Start the monitoring system**
+   ```bash
+   docker-compose up -d
+   ```
+
+4. **Access the dashboard**
+   - Grafana: http://localhost:3000 (admin/admin-change-me)
+   - API: http://localhost:8080
+   - Metrics: http://localhost:9090
+
+### Environment Configuration
+
+Create a `.env` file with the following variables:
+
 ```bash
-git clone <repository-url>
-cd owasp-zap-automation
+# Database
+POSTGRES_PASSWORD=secure-password-change-me
+REDIS_PASSWORD=redis-password-change-me
+
+# Grafana
+GRAFANA_ADMIN_PASSWORD=admin-change-me
+GRAFANA_API_KEY=your-api-key
+
+# SIEM Integration
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+SIEM_WEBHOOK_URL=https://your-siem-webhook
+
+# API Authentication
+ADMIN_API_TOKEN=admin-token-change-me
+READONLY_API_TOKEN=readonly-token-change-me
+
+# Optional: InfluxDB (if using instead of Prometheus)
+INFLUXDB_ADMIN_PASSWORD=influx-admin-password
+INFLUXDB_ADMIN_TOKEN=influx-token-change-me
 ```
 
-### 2. Torne o script executável
-```bash
-chmod +x run_zap_automation.sh
-```
+## ⚙️ Configuration
 
-### 3. Verificar Docker
-```bash
-docker --version
-docker-compose --version
-```
+### Main Configuration (dast_config.yaml)
 
-### 4. Pull das imagens necessárias
-```bash
-docker pull owasp/zap2docker-stable:2.14.0
-docker pull selenium/hub:4.15.0-20231129
-docker pull selenium/node-chrome:4.15.0-20231129
-```
-
-## ⚙️ Configuração
-
-### Estrutura de Arquivos
-```
-owasp-zap-automation/
-├── zap_automation_plan.yaml          # Configuração principal
-├── zap_spa_automation.yaml           # Configuração para SPAs
-├── zap_policy_config.yaml            # Políticas otimizadas
-├── run_zap_automation.sh             # Script principal
-├── docker-compose.yaml               # Orquestração Docker
-├── examples/
-│   └── zap_application_examples.yaml # Exemplos por tipo de app
-├── reports/                          # Relatórios gerados
-├── config/                           # Configurações extras
-└── grafana/                          # Dashboards Grafana
-```
-
-### Variáveis de Ambiente
-
-#### Obrigatórias
-```bash
-export TARGET_URL="https://example.com"
-```
-
-#### Opcionais
-```bash
-export ZAP_VERSION="2.14.0"
-export AUTH_USER="testuser"
-export AUTH_PASS="testpass"
-export LOGIN_URL="https://example.com/login"
-export SPA_BASE_URL="https://app.example.com"
-export API_BASE_URL="https://api.example.com"
-export SELENIUM_GRID_URL="http://selenium-hub:4444/wd/hub"
-```
-
-## 🚀 Uso Básico
-
-### Varredura Padrão
-```bash
-TARGET_URL=https://example.com ./run_zap_automation.sh standard
-```
-
-### Varredura SPA (React/Angular/Vue)
-```bash
-TARGET_URL=https://app.example.com ./run_zap_automation.sh spa
-```
-
-### Varredura Rápida (CI/CD)
-```bash
-TARGET_URL=https://staging.example.com ./run_zap_automation.sh quick
-```
-
-### Com Autenticação
-```bash
-TARGET_URL=https://example.com \
-AUTH_USER=testuser \
-AUTH_PASS=testpass \
-LOGIN_URL=https://example.com/login \
-./run_zap_automation.sh standard
-```
-
-## 🎯 Tipos de Varredura
-
-### 1. Standard Scan
-Varredura completa para aplicações web tradicionais.
-
-**Características:**
-- Spider tradicional
-- Passive scan
-- Active scan com políticas otimizadas
-- Relatórios em múltiplos formatos
-
-**Duração:** 20-45 minutos
-
-### 2. SPA Scan
-Otimizada para Single Page Applications.
-
-**Características:**
-- AJAX Spider com Selenium
-- Detecção de DOM XSS
-- Configurações específicas para SPAs
-- Integração com Selenium Grid
-
-**Duração:** 30-60 minutos
-
-### 3. Quick Scan
-Varredura rápida para CI/CD.
-
-**Características:**
-- Baseline scan do ZAP
-- Foco em vulnerabilidades críticas
-- Timeout reduzido
-- Relatório simplificado
-
-**Duração:** 5-15 minutos
-
-### 4. API Scan
-Específica para APIs REST/GraphQL.
-
-**Características:**
-- Import de especificações OpenAPI
-- Testes específicos para APIs
-- Autenticação via Bearer Token
-- Validação de CORS
-
-**Duração:** 15-30 minutos
-
-## 🔧 Configurações Avançadas
-
-### Personalizar Políticas de Varredura
-
-Edite `zap_policy_config.yaml` para:
-
-1. **Desabilitar regras** que geram falsos positivos
-2. **Ajustar thresholds** (LOW, MEDIUM, HIGH)
-3. **Configurar strength** (LOW, MEDIUM, HIGH)
-4. **Definir timeouts** por regra
-
-Exemplo:
 ```yaml
-disabledRules:
-  - id: "10096"
-    name: "Timestamp Disclosure"
-    reason: "Falsos positivos frequentes"
+# Scan scheduling based on priority
+scan_schedules:
+  high_priority: "0 */2 * * *"    # Every 2 hours
+  medium_priority: "0 */6 * * *"  # Every 6 hours  
+  low_priority: "0 0 */1 * *"     # Daily
 
-ruleConfigs:
-  - id: "40018" # SQL Injection
-    threshold: "HIGH"
-    strength: "HIGH"
+# Grafana integration
+grafana:
+  enabled: true
+  url: "http://localhost:3000"
+  api_key: "${GRAFANA_API_KEY}"
+
+# SIEM integration
+siem:
+  enabled: true
+  type: "webhook"  # webhook, splunk, elasticsearch, sentinel, qradar
+  webhook_url: "${SIEM_WEBHOOK_URL}"
+  severity_threshold: "medium"
 ```
 
-### Configurar para Diferentes Ambientes
+### Adding Scan Targets
 
+Using the Python API:
+```python
+python dast_monitor.py --add-target example.com --scan-type standard --priority 3
+```
+
+Using the REST API:
 ```bash
-# Desenvolvimento - Mais agressivo
-ENVIRONMENT=development ./run_zap_automation.sh standard
-
-# Produção - Mais conservador
-ENVIRONMENT=production ./run_zap_automation.sh quick
+curl -X POST "http://localhost:8080/api/v1/targets" \
+  -H "Authorization: Bearer ${ADMIN_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain": "example.com",
+    "scan_type": "standard", 
+    "priority": 3
+  }'
 ```
 
-### Usar Docker Compose
+## 🔍 Scanning Types
 
-#### SPA com Selenium Grid
-```bash
-TARGET_URL=https://app.example.com \
-docker-compose --profile zap-with-grid up
-```
+### Standard Web Application Scan
+- **Purpose**: General web application security testing
+- **Features**: Spider crawling, passive + active scanning
+- **Duration**: 30-60 minutes typical
+- **Use Case**: Traditional web applications
 
-#### Com Monitoramento
-```bash
-TARGET_URL=https://example.com \
-docker-compose --profile zap-only --profile monitoring up
-```
+### Single Page Application (SPA) Scan  
+- **Purpose**: Modern JavaScript applications
+- **Features**: AJAX spider, Selenium browser automation
+- **Duration**: 45-90 minutes typical
+- **Use Case**: React, Angular, Vue.js applications
 
-## 🔄 Integração CI/CD
+### API Service Scan
+- **Purpose**: RESTful API and web service testing
+- **Features**: OpenAPI spec import, API-specific tests
+- **Duration**: 15-45 minutes typical
+- **Use Case**: REST APIs, GraphQL endpoints
 
-### Jenkins Pipeline
-```groovy
+## 📊 Monitoring & Dashboards
+
+### Grafana Dashboards
+
+The system includes pre-built Grafana dashboards:
+
+1. **Security Overview**
+   - Total scans and targets
+   - Alert severity distribution
+   - Scan success rates
+   - Recent findings
+
+2. **Vulnerability Trends** 
+   - Historical vulnerability data
+   - Risk trend analysis
+   - Target comparison metrics
+   - Remediation tracking
+
+3. **System Health**
+   - Scan duration monitoring
+   - Error rates and failures
+   - Resource utilization
+   - Queue status
+
+### Prometheus Metrics
+
+Key metrics exposed:
+- `dast_scan_duration_seconds` - Scan execution time
+- `dast_alerts_by_severity` - Alert counts by risk level
+- `dast_scans_total` - Total scan counter
+- `dast_targets_total` - Monitored targets count
+- `dast_subdomains_discovered` - Subdomain discovery metrics
+
+## 🔗 Integrations
+
+### SIEM/SOAR Platforms
+
+Supported integrations:
+- **Splunk** - HEC endpoint integration
+- **Elasticsearch** - Direct indexing with Kibana dashboards  
+- **Azure Sentinel** - Log Analytics workspace integration
+- **IBM QRadar** - API-based event forwarding
+- **Generic Webhook** - Custom SIEM integration
+
+### CI/CD Pipelines
+
+Quality gate integration:
+```yaml
+# Jenkins Pipeline Example
 pipeline {
     agent any
-    
-    environment {
-        TARGET_URL = "${params.TARGET_URL}"
-        ZAP_VERSION = "2.14.0"
-    }
-    
     stages {
         stage('Security Scan') {
             steps {
                 script {
-                    sh '''
-                        chmod +x run_zap_automation.sh
-                        ./run_zap_automation.sh quick
-                    '''
-                }
-            }
-        }
-        
-        stage('Process Results') {
-            steps {
-                script {
-                    // Publicar relatórios
-                    publishHTML([
-                        allowMissing: false,
-                        alwaysLinkToLastBuild: true,
-                        keepAll: true,
-                        reportDir: 'reports',
-                        reportFiles: '*.html',
-                        reportName: 'ZAP Security Report'
-                    ])
+                    def response = httpRequest(
+                        url: "${DAST_MONITOR_URL}/api/v1/scan",
+                        httpMode: 'POST',
+                        authentication: 'dast-api-token',
+                        requestBody: '{"target": "${APP_URL}", "wait": true}'
+                    )
                     
-                    // Processar métricas
-                    sh './run_zap_automation.sh process-reports'
+                    def result = readJSON text: response.content
+                    if (result.alerts_high > 0) {
+                        error("High severity vulnerabilities found")
+                    }
                 }
             }
-        }
-    }
-    
-    post {
-        always {
-            archiveArtifacts artifacts: 'reports/**/*', fingerprint: true
         }
     }
 }
 ```
 
-### GitHub Actions
+### Notification Channels
+
+Supported notification methods:
+- **Slack** - Rich message formatting with alert details
+- **Email** - SMTP integration with HTML reports
+- **Microsoft Teams** - Webhook-based notifications  
+- **Custom Webhooks** - Flexible integration options
+
+## 🚦 API Reference
+
+### Authentication
+
+All API requests require authentication:
+```bash
+curl -H "Authorization: Bearer ${API_TOKEN}" \
+  "http://localhost:8080/api/v1/status"
+```
+
+### Key Endpoints
+
+| Endpoint | Method | Description |
+|----------|---------|-------------|
+| `/api/v1/targets` | GET | List all targets |
+| `/api/v1/targets` | POST | Add new target |
+| `/api/v1/scan` | POST | Trigger scan |
+| `/api/v1/results/{target}` | GET | Get scan results |
+| `/api/v1/status` | GET | System status |
+| `/health` | GET | Health check |
+| `/metrics` | GET | Prometheus metrics |
+
+### Example API Usage
+
+**Add a target:**
+```bash
+curl -X POST "http://localhost:8080/api/v1/targets" \
+  -H "Authorization: Bearer ${ADMIN_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain": "example.com",
+    "scan_type": "standard",
+    "priority": 2,
+    "auth_config": {
+      "type": "form",
+      "login_url": "https://example.com/login",
+      "username": "testuser",
+      "password": "testpass"
+    }
+  }'
+```
+
+**Get scan results:**
+```bash
+curl -H "Authorization: Bearer ${READONLY_API_TOKEN}" \
+  "http://localhost:8080/api/v1/results/example.com?limit=10"
+```
+
+## 🐳 Docker Deployment
+
+### Production Deployment
+
+1. **Configure production environment**
+   ```bash
+   # Use production compose file
+   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+   ```
+
+2. **Enable SSL/TLS**
+   ```bash
+   # Copy SSL certificates to nginx/ssl/
+   # Update nginx configuration for HTTPS
+   ```
+
+3. **Scale services**
+   ```bash
+   docker-compose up -d --scale dast-monitor=3
+   ```
+
+### Service Profiles
+
+Different deployment profiles available:
+- **Default**: Core monitoring services
+- **Production**: With nginx reverse proxy and SSL
+- **InfluxDB**: Use InfluxDB instead of Prometheus  
+- **Elastic**: Include Elasticsearch and Kibana
+- **Discovery**: Enhanced subdomain discovery services
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+**Scans failing with permission errors:**
+```bash
+# Ensure Docker socket permissions
+sudo usermod -aG docker $USER
+# Or run with elevated privileges
+```
+
+**High memory usage:**
 ```yaml
-name: Security Scan
-
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  security-scan:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Run ZAP Security Scan
-      env:
-        TARGET_URL: ${{ secrets.TARGET_URL }}
-      run: |
-        chmod +x run_zap_automation.sh
-        ./run_zap_automation.sh quick
-    
-    - name: Upload Reports
-      uses: actions/upload-artifact@v3
-      with:
-        name: zap-reports
-        path: reports/
+# Limit ZAP memory in dast_config.yaml
+zap:
+  memory: "2g"
+  timeout: 1800
 ```
 
-### GitLab CI
-```yaml
-variables:
-  ZAP_VERSION: "2.14.0"
-
-security_scan:
-  stage: test
-  image: docker:latest
-  services:
-    - docker:dind
-  script:
-    - chmod +x run_zap_automation.sh
-    - TARGET_URL=$STAGING_URL ./run_zap_automation.sh quick
-  artifacts:
-    reports:
-      junit: reports/*.xml
-    paths:
-      - reports/
-    expire_in: 1 week
-  only:
-    - merge_requests
-    - main
-```
-
-## 📊 Monitoramento e Relatórios
-
-### Integração com Grafana
-
-1. **Iniciar stack de monitoramento:**
+**Subdomain discovery not working:**
 ```bash
-docker-compose --profile monitoring up -d
+# Install discovery tools
+sudo apt install subfinder assetfinder
+# Or use Docker-based tools
 ```
 
-2. **Acessar Grafana:** http://localhost:3000
-   - Usuário: admin
-   - Senha: admin123
+### Log Analysis
 
-3. **Processar métricas:**
 ```bash
-./run_zap_automation.sh process-reports
-```
+# Monitor main application logs
+docker-compose logs -f dast-monitor
 
-### Métricas Disponíveis
+# Check scan execution logs  
+docker-compose logs dast-monitor | grep "scan_id"
 
-- Total de vulnerabilidades por criticidade
-- Tendências de segurança ao longo do tempo
-- Comparação entre ambientes
-- Time to remediation
-- Cobertura de testes
-
-### Alertas Customizados
-
-Configure alertas no Grafana para:
-- Vulnerabilidades críticas detectadas
-- Aumento significativo de alertas
-- Falhas no processo de scan
-
-## 🐛 Troubleshooting
-
-### Problemas Comuns
-
-#### 1. "Target URL não acessível"
-```bash
-# Verificar conectividade
-curl -I $TARGET_URL
-
-# Verificar DNS
-nslookup $(echo $TARGET_URL | sed 's|https\?://||' | cut -d'/' -f1)
-```
-
-#### 2. "Selenium Grid não responde"
-```bash
-# Verificar status do grid
-docker logs selenium-hub
-
-# Restart do grid
-./run_zap_automation.sh cleanup-selenium
-./run_zap_automation.sh setup-selenium
-```
-
-#### 3. "Memória insuficiente"
-```bash
-# Verificar uso de memória
-docker stats
-
-# Aumentar limites no docker-compose.yaml
-environment:
-  - JAVA_OPTS=-Xmx4g
-```
-
-#### 4. "Falha na autenticação"
-```bash
-# Testar autenticação manualmente
-curl -X POST $LOGIN_URL \
-  -d "username=$AUTH_USER&password=$AUTH_PASS" \
-  -v
-```
-
-### Debug Mode
-
-Execute com debug habilitado:
-```bash
-DEBUG=true TARGET_URL=https://example.com ./run_zap_automation.sh standard
-```
-
-### Logs Detalhados
-
-Verificar logs do container:
-```bash
-docker logs owasp-zap-automation
+# Database connection issues
+docker-compose logs postgres
 ```
 
 ### Performance Tuning
 
-Para ambientes com recursos limitados:
-
-1. **Reduzir paralelismo:**
+**Concurrent scans:**
 ```yaml
-parameters:
-  threadPerHost: 1
-  maxDuration: 15
+max_concurrent_scans: 5  # Adjust based on resources
 ```
 
-2. **Limitar regras ativas:**
+**Scan optimization:**
 ```yaml
-disabledRules:
-  - "10096"  # Timestamp
-  - "10094"  # Base64
-  - "10049"  # Content Cacheability
+performance:
+  scan_optimization:
+    max_crawl_depth: 3     # Reduce for faster scans
+    request_delay: 50      # Increase for rate limiting
 ```
 
-3. **Configurar timeouts:**
-```yaml
-performanceOptimization:
-  maxScanTimePerRule: 180
-  maxRequestsPerRule: 50
-```
+## 🔒 Security Considerations
 
-## 📝 Exemplos Práticos
+### Network Security
+- Use firewalls to restrict access to monitoring ports
+- Enable TLS for all external communications
+- Consider VPN access for management interfaces
 
-### E-commerce
-```bash
-TARGET_URL=https://shop.example.com \
-AUTH_USER=customer@example.com \
-AUTH_PASS=password123 \
-./run_zap_automation.sh standard
-```
+### Data Protection  
+- Encrypt sensitive configuration data
+- Regular backup of scan results and configurations
+- Implement data retention policies
 
-### API REST
-```bash
-TARGET_URL=https://api.example.com \
-API_TOKEN=bearer_token_here \
-./run_zap_automation.sh standard rest_api_config.yaml
-```
+### Access Control
+- Use strong API tokens and rotate regularly
+- Implement role-based access control
+- Monitor API usage and authentication failures
 
-### WordPress
-```bash
-TARGET_URL=https://blog.example.com \
-AUTH_USER=wpuser \
-AUTH_PASS=wppass \
-./run_zap_automation.sh standard wordpress_config.yaml
-```
+## 🚀 Getting Started
 
-## 🤝 Contribuindo
+1. **Set up your targets**
+   ```bash
+   python dast_monitor.py --add-target yourapp.com --scan-type standard --priority 3
+   ```
 
-1. Fork o projeto
-2. Crie uma branch para sua feature
-3. Commit suas mudanças
-4. Push para a branch
-5. Abra um Pull Request
+2. **Monitor the dashboard**
+   - Open Grafana at http://localhost:3000
+   - View the "DAST Security Monitoring" dashboard
+   - Set up alerts for high-severity findings
 
-## 📄 Licença
+3. **Configure integrations**
+   - Set up SIEM forwarding in `dast_config.yaml`
+   - Configure Slack notifications
+   - Enable CI/CD quality gates
 
-Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para detalhes.
+## 📞 Support
 
-## 🔗 Links Úteis
+For questions, issues, or contributions:
+- Create an issue in the repository
+- Check the troubleshooting section
+- Review the configuration examples
 
-- [OWASP ZAP Documentation](https://www.zaproxy.org/docs/)
-- [ZAP Automation Framework](https://www.zaproxy.org/docs/automate/automation-framework/)
-- [OWASP Top 10](https://owasp.org/Top10/)
-- [ZAP Docker Images](https://hub.docker.com/r/owasp/zap2docker-stable)
-- [Selenium Grid Documentation](https://selenium-python.readthedocs.io/)
+---
+
+**Transform your security scanning from reactive to proactive with continuous DAST monitoring!** 🛡️
