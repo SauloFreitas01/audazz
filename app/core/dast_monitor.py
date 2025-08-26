@@ -20,6 +20,11 @@ import requests
 import sqlite3
 from croniter import croniter
 
+# Import integrations
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'integrations'))
+from google_chat_integration import GoogleChatIntegration
+
 @dataclass
 class ScanTarget:
     domain: str
@@ -64,6 +69,9 @@ class DASTMonitor:
         
         # Thread pool for concurrent scans
         self.executor = ThreadPoolExecutor(max_workers=self.config.get('max_concurrent_scans', 3))
+        
+        # Initialize integrations
+        self._init_integrations()
         
         self.logger.info("DAST Monitor initialized")
 
@@ -189,6 +197,17 @@ class DASTMonitor:
         
         conn.commit()
         conn.close()
+
+    def _init_integrations(self):
+        """Initialize notification and monitoring integrations"""
+        # Google Chat integration
+        google_chat_config = self.config.get('notifications', {}).get('google_chat', {})
+        self.google_chat = GoogleChatIntegration(google_chat_config)
+        
+        if self.google_chat.enabled:
+            self.logger.info("Google Chat integration enabled")
+        else:
+            self.logger.info("Google Chat integration disabled")
 
     def _load_targets(self) -> List[ScanTarget]:
         conn = sqlite3.connect(self.db_path)
@@ -564,6 +583,9 @@ class DASTMonitor:
         # Send to SIEM if enabled and meets threshold
         if self._should_send_to_siem(result):
             self._send_to_siem(result)
+        
+        # Send notifications
+        asyncio.create_task(self._send_notifications(result))
 
     def _send_to_grafana(self, result: ScanResult):
         """Send metrics to Grafana"""
@@ -645,6 +667,75 @@ class DASTMonitor:
             return 'low'
         else:
             return 'info'
+
+    async def _send_notifications(self, result: ScanResult):
+        """Send notifications to configured channels"""
+        try:
+            # Send to Google Chat
+            if self.google_chat.enabled:
+                await self.google_chat.send_scan_alert(result)
+            
+            # Send to Slack (if implemented)
+            slack_config = self.config.get('notifications', {}).get('slack', {})
+            if slack_config.get('enabled', False):
+                await self._send_slack_notification(result, slack_config)
+                
+        except Exception as e:
+            self.logger.error(f"Error sending notifications: {e}")
+
+    async def _send_slack_notification(self, result: ScanResult, slack_config: Dict):
+        """Send notification to Slack (simplified implementation)"""
+        try:
+            webhook_url = slack_config.get('webhook_url')
+            if not webhook_url:
+                return
+            
+            severity = self._calculate_severity(result)
+            color_map = {
+                'high': 'danger',
+                'medium': 'warning', 
+                'low': 'good',
+                'info': '#36a64f'
+            }
+            
+            payload = {
+                "text": f"DAST Scan {result.status.title()}: {result.target}",
+                "attachments": [
+                    {
+                        "color": color_map.get(severity, 'good'),
+                        "fields": [
+                            {"title": "Target", "value": result.target, "short": True},
+                            {"title": "Status", "value": result.status.title(), "short": True},
+                            {"title": "High Alerts", "value": str(result.alerts_high), "short": True},
+                            {"title": "Medium Alerts", "value": str(result.alerts_medium), "short": True},
+                            {"title": "Total Alerts", "value": str(result.total_alerts), "short": True},
+                            {"title": "Duration", "value": f"{int(result.duration)}s", "short": True}
+                        ],
+                        "timestamp": int(result.timestamp.timestamp())
+                    }
+                ]
+            }
+            
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=payload) as response:
+                    if response.status == 200:
+                        self.logger.info(f"Slack notification sent for {result.target}")
+                    else:
+                        self.logger.error(f"Failed to send Slack notification: {response.status}")
+                        
+        except Exception as e:
+            self.logger.error(f"Error sending Slack notification: {e}")
+
+    async def _send_subdomain_discovery_notification(self, domain: str, new_subdomains: List[str], total_subdomains: int):
+        """Send notifications for subdomain discoveries"""
+        try:
+            if self.google_chat.enabled:
+                await self.google_chat.send_discovery_alert(domain, new_subdomains, total_subdomains)
+                
+            # Could add Slack subdomain notifications here too
+        except Exception as e:
+            self.logger.error(f"Error sending subdomain discovery notification: {e}")
 
     async def _monitor_loop(self):
         """Main monitoring loop"""

@@ -137,6 +137,19 @@ notifications:
     webhook_url: "${SLACK_WEBHOOK_URL}"
     channel: "#security-alerts"
     severity_threshold: "medium"
+    message_format: "attachments"  # "attachments" or "blocks"
+  
+  # Google Chat notifications
+  google_chat:
+    enabled: true
+    webhook_url: "${GOOGLE_CHAT_WEBHOOK_URL}"
+    space_name: "Security Monitoring"
+    bot_name: "DAST Monitor"
+    severity_threshold: "medium"
+    message_style: "card"  # "simple", "card", "rich"
+    thread_alerts: true  # Group related alerts in threads
+    include_remediation: true
+    max_card_fields: 10
   
   # Microsoft Teams
   teams:
