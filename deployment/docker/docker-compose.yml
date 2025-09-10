@@ -112,8 +112,8 @@ services:
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ../../config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../config/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
     ports:
       - "9091:9090"  # Different port to avoid conflict with app metrics
@@ -270,7 +270,6 @@ networks:
   monitoring:
     driver: bridge
     name: monitoring
-    external: true
 
 # Persistent volumes
 volumes:
