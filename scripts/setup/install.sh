@@ -46,9 +46,14 @@ check_requirements() {
         error "Docker is required but not installed. Please install Docker first."
     fi
     
-    # Check Docker Compose
-    if ! command -v docker-compose &> /dev/null; then
+    # Check Docker Compose (modern syntax)
+    if ! docker compose version &> /dev/null; then
         error "Docker Compose is required but not installed."
+    fi
+    
+    # Check Go
+    if ! command -v go &> /dev/null; then
+        error "Go is required for subdomain discovery tools but not installed."
     fi
     
     # Check available disk space (minimum 10GB)
@@ -76,28 +81,19 @@ install_subdomain_tools() {
     # Install subfinder
     if ! command -v subfinder &> /dev/null; then
         log "Installing subfinder..."
-        wget -q https://github.com/projectdiscovery/subfinder/releases/latest/download/subfinder_2.6.3_linux_amd64.zip -O subfinder.zip
-        unzip -q subfinder.zip
-        sudo mv subfinder /usr/local/bin/
-        rm subfinder.zip README.md LICENSE.md
+        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
     fi
     
     # Install assetfinder
     if ! command -v assetfinder &> /dev/null; then
         log "Installing assetfinder..."
-        wget -q https://github.com/tomnomnom/assetfinder/releases/latest/download/assetfinder-linux-amd64-1.0.0.tgz -O assetfinder.tgz
-        tar -xzf assetfinder.tgz
-        sudo mv assetfinder /usr/local/bin/
-        rm assetfinder.tgz
+        go install github.com/tomnomnom/assetfinder@latest
     fi
     
     # Install amass (optional)
     if ! command -v amass &> /dev/null; then
         log "Installing amass..."
-        wget -q https://github.com/owasp-amass/amass/releases/latest/download/amass_linux_amd64.zip -O amass.zip
-        unzip -q amass.zip -d amass_tmp
-        sudo mv amass_tmp/amass_linux_amd64/amass /usr/local/bin/
-        rm -rf amass.zip amass_tmp
+        CGO_ENABLED=0 go install -v github.com/owasp-amass/amass/v5/cmd/amass@main
     fi
     
     success "Subdomain discovery tools installed"
@@ -108,19 +104,27 @@ setup_directories() {
     log "Setting up directories and permissions..."
     
     # Create necessary directories
-    mkdir -p data/{reports,logs,exports}
-    mkdir -p security/certificates
-    mkdir -p config/{grafana,prometheus,nginx}
+    if ! mkdir -p data/{reports,logs,exports}; then
+        error "Failed to create data directories"
+    fi
+    if ! mkdir -p security/certificates; then
+        error "Failed to create security/certificates directory"
+    fi
+    if ! mkdir -p config/{grafana,prometheus,nginx}; then
+        error "Failed to create config directories"
+    fi
     
-    # Set proper permissions
-    chmod 755 data/
-    chmod 755 data/{reports,logs,exports}
-    chmod 700 security/certificates
+    # Set proper permissions (skip on Windows)
+    if [[ "$OSTYPE" != "msys" && "$OSTYPE" != "cygwin" ]]; then
+        chmod 755 data/
+        chmod 755 data/{reports,logs,exports}
+        chmod 700 security/certificates
+    fi
     
     # Create .gitkeep files
-    touch data/reports/.gitkeep
-    touch data/logs/.gitkeep
-    touch security/certificates/.gitkeep
+    touch data/reports/.gitkeep || warning "Failed to create data/reports/.gitkeep"
+    touch data/logs/.gitkeep || warning "Failed to create data/logs/.gitkeep"
+    touch security/certificates/.gitkeep || warning "Failed to create security/certificates/.gitkeep"
     
     success "Directories created and permissions set"
 }
@@ -131,8 +135,11 @@ setup_environment() {
     
     if [ ! -f .env ]; then
         if [ -f .env.example ]; then
-            cp .env.example .env
-            warning "Created .env from example. Please customize it with your settings."
+            if cp .env.example .env; then
+                warning "Created .env from example. Please customize it with your settings."
+            else
+                error "Failed to create .env file from .env.example"
+            fi
         else
             error ".env.example file not found"
         fi
@@ -153,7 +160,7 @@ setup_environment() {
 pull_images() {
     log "Pulling required Docker images..."
     
-    docker-compose -f deployment/docker/docker-compose.yml pull
+    docker compose -f deployment/docker/docker-compose.yml pull
     
     success "Docker images pulled successfully"
 }
@@ -163,14 +170,14 @@ init_database() {
     log "Initializing database..."
     
     # Start only database services
-    docker-compose -f deployment/docker/docker-compose.yml up -d postgres redis
+    docker compose -f deployment/docker/docker-compose.yml up -d postgres redis
     
     # Wait for services to be ready
     log "Waiting for database services to be ready..."
     sleep 30
     
     # Run database migrations (if any)
-    # docker-compose -f deployment/docker/docker-compose.yml exec dast-monitor python -m alembic upgrade head
+    # docker compose -f deployment/docker/docker-compose.yml exec dast-monitor python -m alembic upgrade head
     
     success "Database initialized"
 }
@@ -180,7 +187,7 @@ setup_monitoring() {
     log "Setting up monitoring and dashboards..."
     
     # Start Grafana and Prometheus
-    docker-compose -f deployment/docker/docker-compose.yml up -d grafana prometheus
+    docker compose -f deployment/docker/docker-compose.yml up -d grafana prometheus
     
     # Wait for Grafana to be ready
     sleep 30
@@ -211,7 +218,7 @@ main() {
     echo
     echo "Next steps:"
     echo "1. Customize your .env file with your specific configuration"
-    echo "2. Start the full system: docker-compose -f deployment/docker/docker-compose.yml up -d"
+    echo "2. Start the full system: docker compose -f deployment/docker/docker-compose.yml up -d"
     echo "3. Add your first target: python main.py --add-target yourapp.com"
     echo "4. Access Grafana dashboard at http://localhost:3000"
     echo "5. Check the README.md for detailed usage instructions"
