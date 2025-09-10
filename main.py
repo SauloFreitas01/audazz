@@ -39,7 +39,7 @@ def main():
     try:
         if args.add_target:
             monitor.add_target(args.add_target, args.scan_type, args.priority)
-            print(f"✓ Added target: {args.add_target}")
+            print(f"[SUCCESS] Added target: {args.add_target}")
         elif args.status:
             status = monitor.get_status()
             print("DAST Monitor Status:")
@@ -49,12 +49,12 @@ def main():
             print(f"  Avg alerts (24h): {status['avg_alerts_24h']:.1f}")
             print(f"  Next scan: {status['next_scheduled_scan']}")
         else:
-            print("🚀 Starting DAST Continuous Monitor...")
+            print("[INFO] Starting DAST Continuous Monitor...")
             monitor.start()
     except KeyboardInterrupt:
-        print("\n⏹️  Shutting down gracefully...")
+        print("\n[INFO] Shutting down gracefully...")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[ERROR] Error: {e}")
         sys.exit(1)
 
 if __name__ == '__main__':

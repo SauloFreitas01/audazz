@@ -71,6 +71,40 @@ check_requirements() {
     success "System requirements check completed"
 }
 
+# Install Python dependencies
+install_python_dependencies() {
+    log "Installing Python dependencies..."
+    
+    # Check if Python is installed
+    if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
+        error "Python is required but not installed. Please install Python 3.9+ first."
+    fi
+    
+    # Use python3 if available, otherwise python
+    PYTHON_CMD="python3"
+    if ! command -v python3 &> /dev/null; then
+        PYTHON_CMD="python"
+    fi
+    
+    # Check Python version
+    PYTHON_VERSION=$($PYTHON_CMD --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
+    if [[ $(echo "$PYTHON_VERSION < 3.9" | bc -l) -eq 1 ]]; then
+        warning "Python version $PYTHON_VERSION detected. Python 3.9+ is recommended."
+    fi
+    
+    # Check if pip is available
+    if ! $PYTHON_CMD -m pip --version &> /dev/null; then
+        error "pip is required but not available. Please install pip first."
+    fi
+    
+    # Install required Python packages
+    log "Installing required Python packages..."
+    $PYTHON_CMD -m pip install --upgrade pip
+    $PYTHON_CMD -m pip install pyyaml requests croniter aiohttp
+    
+    success "Python dependencies installed"
+}
+
 # Install subdomain discovery tools
 install_subdomain_tools() {
     log "Installing subdomain discovery tools..."
@@ -206,6 +240,7 @@ main() {
     
     check_root
     check_requirements
+    install_python_dependencies
     install_subdomain_tools
     setup_directories
     setup_environment
