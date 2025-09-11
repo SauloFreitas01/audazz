@@ -20,6 +20,7 @@ def main():
     parser.add_argument('--config', default='config/dast_config.yaml', 
                        help='Configuration file path')
     parser.add_argument('--add-target', help='Add a target domain')
+    parser.add_argument('--scan', help='Run a manual scan on a target domain')
     parser.add_argument('--scan-type', default='standard', 
                        choices=['standard', 'spa', 'api'], 
                        help='Scan type for new targets')
@@ -40,6 +41,12 @@ def main():
         if args.add_target:
             monitor.add_target(args.add_target, args.scan_type, args.priority)
             print(f"[SUCCESS] Added target: {args.add_target}")
+        elif args.scan:
+            print(f"[INFO] Starting manual scan for: {args.scan}")
+            result = monitor.run_manual_scan(args.scan, args.scan_type)
+            print(f"[SUCCESS] Manual scan completed for: {args.scan}")
+            if result:
+                print(f"[INFO] Scan results: {result}")
         elif args.status:
             status = monitor.get_status()
             print("DAST Monitor Status:")

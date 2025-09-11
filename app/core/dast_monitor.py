@@ -55,7 +55,12 @@ class DASTMonitor:
     def __init__(self, config_path: str = "dast_config.yaml"):
         self.config_path = config_path
         self.config = self._load_config()
-        self.db_path = self.config.get('database', 'dast_monitor.db')
+        
+        # Create directory structure
+        self._create_directory_structure()
+        
+        # Set proper paths for data files
+        self.db_path = os.path.join('data', 'db', self.config.get('database', 'dast_monitor.db'))
         self.running = False
         
         # Setup logging
@@ -67,6 +72,9 @@ class DASTMonitor:
         # Load targets
         self.targets = self._load_targets()
         
+        # Reorganize existing reports into new structure
+        self._reorganize_existing_reports()
+        
         # Thread pool for concurrent scans
         self.executor = ThreadPoolExecutor(max_workers=self.config.get('max_concurrent_scans', 3))
         
@@ -77,7 +85,7 @@ class DASTMonitor:
 
     def _setup_logging(self):
         log_level = self.config.get('log_level', 'INFO')
-        log_file = self.config.get('log_file', 'dast_monitor.log')
+        log_file = os.path.join('logs', self.config.get('log_file', 'dast_monitor.log'))
         
         logging.basicConfig(
             level=getattr(logging, log_level),
@@ -89,10 +97,141 @@ class DASTMonitor:
         )
         self.logger = logging.getLogger(__name__)
 
+    def _create_directory_structure(self):
+        """Create necessary directory structure for the application"""
+        directories = [
+            'logs',
+            'reports', 
+            'data/db',
+            'data/temp',
+            'data/exports'
+        ]
+        
+        for directory in directories:
+            os.makedirs(directory, exist_ok=True)
+    
+    def _create_report_directory_structure(self, domain: str, is_subdomain: bool = False, root_domain: str = None):
+        """Create organized directory structure for domain reports"""
+        if is_subdomain and root_domain:
+            # For subdomains: reports/root-domain.com/subdomains/subdomain-name/
+            subdomain_name = domain.replace(f'.{root_domain}', '').replace(f'{root_domain}.', '')
+            base_path = os.path.join('reports', root_domain, 'subdomains', subdomain_name)
+        elif '.' in domain and not is_subdomain:
+            # For main domains: reports/domain.com/main_domain/
+            base_path = os.path.join('reports', domain, 'main_domain')
+        else:
+            # Fallback for complex domains
+            safe_domain = domain.replace('/', '_').replace(':', '_')
+            base_path = os.path.join('reports', safe_domain, 'main_domain')
+        
+        # Create subdirectories for each file type
+        file_types = ['json', 'html', 'xml', 'sarif']
+        for file_type in file_types:
+            dir_path = os.path.join(base_path, file_type)
+            os.makedirs(dir_path, exist_ok=True)
+        
+        return base_path
+    
+    def _get_root_domain_and_subdomain_info(self, domain: str, target: ScanTarget):
+        """Determine if domain is a subdomain and identify root domain"""
+        # Check if this domain is in the subdomains list of the target
+        if domain != target.domain and domain in target.subdomains:
+            return True, target.domain  # is_subdomain, root_domain
+        elif domain != target.domain:
+            # Check if domain contains target.domain (e.g., subdomain.target.com)
+            if target.domain in domain and domain != target.domain:
+                return True, target.domain
+        
+        return False, None  # Main domain
+    
+    def _reorganize_existing_reports(self):
+        """Reorganize existing reports into the new directory structure"""
+        reports_dir = Path('reports')
+        if not reports_dir.exists():
+            return
+        
+        # Find all report files in the root reports directory
+        report_files = []
+        for pattern in ['report-*.json', 'report-*.html', 'report-*.xml', 'report-*.sarif.json']:
+            report_files.extend(reports_dir.glob(pattern))
+        
+        self.logger.info(f"Found {len(report_files)} reports to reorganize")
+        
+        for report_file in report_files:
+            try:
+                # Parse filename: report-domain-timestamp.extension
+                filename = report_file.name
+                if not filename.startswith('report-'):
+                    continue
+                
+                # Extract domain and extension
+                parts = filename[7:].split('-')  # Remove 'report-'
+                if len(parts) < 2:
+                    continue
+                
+                domain = '-'.join(parts[:-1])  # All parts except the last (timestamp+extension)
+                timestamp_ext = parts[-1]
+                
+                # Get file extension
+                if filename.endswith('.sarif.json'):
+                    ext = 'sarif'
+                    file_type = 'sarif'
+                elif filename.endswith('.json'):
+                    ext = 'json'
+                    file_type = 'json'
+                elif filename.endswith('.html'):
+                    ext = 'html'
+                    file_type = 'html'
+                elif filename.endswith('.xml'):
+                    ext = 'xml'
+                    file_type = 'xml'
+                else:
+                    continue
+                
+                # Determine if it's a subdomain and get root domain
+                is_subdomain = False
+                root_domain = None
+                
+                # Check against known targets
+                for target in self.targets:
+                    if domain == target.domain:
+                        is_subdomain = False
+                        break
+                    elif domain in target.subdomains:
+                        is_subdomain = True
+                        root_domain = target.domain
+                        break
+                    elif target.domain in domain and domain != target.domain:
+                        is_subdomain = True
+                        root_domain = target.domain
+                        break
+                
+                # Create new directory structure
+                base_path = self._create_report_directory_structure(domain, is_subdomain, root_domain)
+                new_path = os.path.join(base_path, file_type, filename)
+                
+                # Move file if the new location is different
+                if str(report_file) != new_path:
+                    os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                    import shutil
+                    shutil.move(str(report_file), new_path)
+                    self.logger.info(f"Moved {filename} to {new_path}")
+                    
+            except Exception as e:
+                self.logger.error(f"Error reorganizing report {report_file}: {e}")
+
     def _load_config(self) -> Dict:
         try:
             with open(self.config_path, 'r') as f:
-                return yaml.safe_load(f)
+                config_content = f.read()
+                # Simple environment variable substitution for ${VAR} pattern
+                import re
+                def replace_env_vars(match):
+                    var_name = match.group(1)
+                    return os.environ.get(var_name, match.group(0))
+                
+                config_content = re.sub(r'\$\{([^}]+)\}', replace_env_vars, config_content)
+                return yaml.safe_load(config_content)
         except FileNotFoundError:
             self.logger.error(f"Config file {self.config_path} not found")
             return self._create_default_config()
@@ -132,7 +271,7 @@ class DASTMonitor:
             'reports': {
                 'retention_days': 90,
                 'formats': ['json', 'html', 'xml'],
-                'export_path': './reports'
+                'export_path': 'reports'
             }
         }
         
@@ -237,13 +376,18 @@ class DASTMonitor:
                    priority: int = 1, auth_config: Optional[Dict] = None):
         """Add a new target domain for monitoring"""
         
+        # Clean the domain (remove protocol if present)
+        clean_domain = domain.replace('https://', '').replace('http://', '').strip('/')
+        if clean_domain.startswith('//'):
+            clean_domain = clean_domain[2:]
+        
         # Discover subdomains if enabled
         subdomains = []
         if self.config.get('subdomain_discovery', {}).get('enabled', True):
-            subdomains = self._discover_subdomains(domain)
+            subdomains = self._discover_subdomains(clean_domain)
         
         target = ScanTarget(
-            domain=domain,
+            domain=clean_domain,
             subdomains=subdomains,
             scan_type=scan_type,
             auth_config=auth_config,
@@ -269,7 +413,7 @@ class DASTMonitor:
             ))
             conn.commit()
             self.targets.append(target)
-            self.logger.info(f"Added target: {domain}")
+            self.logger.info(f"Added target: {clean_domain}")
             
         except sqlite3.IntegrityError:
             self.logger.warning(f"Target {domain} already exists")
@@ -346,7 +490,7 @@ class DASTMonitor:
         start_time = time.time()
         
         # Create reports directory
-        reports_dir = Path(self.config.get('reports', {}).get('export_path', './reports'))
+        reports_dir = Path(self.config.get('reports', {}).get('export_path', 'reports'))
         reports_dir.mkdir(exist_ok=True)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -382,28 +526,56 @@ class DASTMonitor:
         
         # Prepare automation config
         automation_config = self._prepare_automation_config(domain, target, timestamp)
-        config_path = f"automation_{timestamp}_{hash(domain) % 10000}.yaml"
+        config_filename = f"automation_{timestamp}_{hash(domain) % 10000}.yaml"
+        config_path = os.path.join('data', 'temp', config_filename)
+        # Use forward slashes for Docker container path
+        docker_config_path = f"data/temp/{config_filename}"
+        
+        # Pre-create the organized directory structure for ZAP reports
+        is_subdomain, root_domain = self._get_root_domain_and_subdomain_info(domain, target)
+        self._create_report_directory_structure(domain, is_subdomain, root_domain)
         
         with open(config_path, 'w') as f:
             yaml.dump(automation_config, f)
         
         try:
-            # Run ZAP scan
+            # Get the report directory path for this domain
+            is_subdomain, root_domain = self._get_root_domain_and_subdomain_info(domain, target)
+            if is_subdomain and root_domain:
+                subdomain_name = domain.replace(f'.{root_domain}', '').replace(f'{root_domain}.', '')
+                docker_report_base = f'reports/{root_domain}/subdomains/{subdomain_name}'
+            elif '.' in domain and not is_subdomain:
+                docker_report_base = f'reports/{domain}/main_domain'
+            else:
+                safe_domain = domain.replace('/', '_').replace(':', '_')
+                docker_report_base = f'reports/{safe_domain}/main_domain'
+            
+            # Run ZAP scan with directory creation
             cmd = [
                 'docker', 'run', '--rm',
                 '--name', f'zap-monitor-{timestamp}-{hash(domain) % 10000}',
                 '-v', f'{os.getcwd()}:/zap/wrk/:rw',
                 '-e', f'TARGET_URL=https://{domain}',
                 '--user', 'root',
-                f"owasp/zap2docker-stable:{self.config.get('zap', {}).get('version', '2.14.0')}",
-                'zap.sh', '-cmd', '-autorun', f'/zap/wrk/{config_path}'
+                "zaproxy/zap-stable",
+                'sh', '-c', f'mkdir -p /zap/wrk/{docker_report_base}/json /zap/wrk/{docker_report_base}/html /zap/wrk/{docker_report_base}/xml /zap/wrk/{docker_report_base}/sarif && zap.sh -cmd -autorun /zap/wrk/{docker_config_path}'
             ]
+            
+            self.logger.info(f"Starting ZAP scan for {domain} with command: {' '.join(cmd[:6])}...")
             
             timeout = self.config.get('zap', {}).get('timeout', 3600)
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
             
+            if result.returncode != 0:
+                self.logger.error(f"ZAP scan failed for {domain}. Return code: {result.returncode}")
+                self.logger.error(f"STDERR: {result.stderr}")
+                if result.stdout:
+                    self.logger.error(f"STDOUT: {result.stdout}")
+            else:
+                self.logger.info(f"ZAP scan completed successfully for {domain}")
+            
             # Parse results
-            return self._parse_zap_results(domain, target.scan_type, timestamp, result)
+            return self._parse_zap_results(domain, target.scan_type, timestamp, result, target)
             
         finally:
             # Cleanup
@@ -449,7 +621,6 @@ class DASTMonitor:
                 'parameters': {
                     'context': f'context-{domain}',
                     'url': f'https://{domain}',
-                    'maxDuration': 30,
                     'maxRuleDurationInMins': 5
                 }
             })
@@ -462,14 +633,36 @@ class DASTMonitor:
             }
             config['jobs'].insert(0, auth_job)
         
-        # Add report generation
+        # Add report generation with correct template names
         report_formats = self.config.get('reports', {}).get('formats', ['json'])
+        template_map = {
+            'json': 'traditional-json',
+            'html': 'traditional-html', 
+            'xml': 'traditional-xml',
+            'sarif': 'sarif-json'
+        }
+        
         for fmt in report_formats:
+            template_name = template_map.get(fmt, 'traditional-json')
+            report_filename = f'report-{domain}-{timestamp}.{fmt}'
+            
+            # Create organized directory structure
+            is_subdomain, root_domain = self._get_root_domain_and_subdomain_info(domain, target)
+            base_path = self._create_report_directory_structure(domain, is_subdomain, root_domain)
+            
+            # Determine file type directory
+            file_type = 'sarif' if fmt == 'sarif' else fmt
+            organized_path = os.path.join(base_path, file_type, report_filename)
+            
+            # Use forward slash for Docker container path and make it absolute from ZAP working dir
+            normalized_path = organized_path.replace('\\', '/')
+            docker_report_path = f"/zap/wrk/{normalized_path}"
+            
             config['jobs'].append({
                 'type': 'report',
                 'parameters': {
-                    'template': fmt,
-                    'reportFile': f'report-{domain}-{timestamp}.{fmt}',
+                    'template': template_name,
+                    'reportFile': docker_report_path,
                     'reportTitle': f'DAST Scan Report - {domain}',
                     'reportDescription': f'Automated security scan for {domain}'
                 }
@@ -478,11 +671,17 @@ class DASTMonitor:
         return config
 
     def _parse_zap_results(self, domain: str, scan_type: str, timestamp: str, 
-                          process_result) -> ScanResult:
+                          process_result, target: ScanTarget = None) -> ScanResult:
         """Parse ZAP scan results"""
         
-        # Look for JSON report
-        json_report = f"report-{domain}-{timestamp}.json"
+        # Look for JSON report in organized directory structure
+        if target:
+            is_subdomain, root_domain = self._get_root_domain_and_subdomain_info(domain, target)
+            base_path = self._create_report_directory_structure(domain, is_subdomain, root_domain)
+            json_report = os.path.join(base_path, 'json', f"report-{domain}-{timestamp}.json")
+        else:
+            # Fallback to old structure if no target info available
+            json_report = os.path.join('reports', f"report-{domain}-{timestamp}.json")
         
         if os.path.exists(json_report):
             try:
@@ -584,8 +783,13 @@ class DASTMonitor:
         if self._should_send_to_siem(result):
             self._send_to_siem(result)
         
-        # Send notifications
-        asyncio.create_task(self._send_notifications(result))
+        # Send notifications (handle async context properly)
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._send_notifications(result))
+        except RuntimeError:
+            # No running event loop, create new one for notifications
+            asyncio.run(self._send_notifications(result))
 
     def _send_to_grafana(self, result: ScanResult):
         """Send metrics to Grafana"""
@@ -776,8 +980,8 @@ class DASTMonitor:
                 # Periodic maintenance tasks
                 await self._run_maintenance()
                 
-                # Sleep before next iteration
-                await asyncio.sleep(60)  # Check every minute
+                # Sleep before next iteration (reduced for testing)
+                await asyncio.sleep(30)  # Check every 30 seconds for testing
                 
             except Exception as e:
                 self.logger.error(f"Error in monitoring loop: {e}")
@@ -842,7 +1046,7 @@ class DASTMonitor:
     async def _cleanup_old_reports(self, retention_days: int):
         """Clean up old report files"""
         try:
-            reports_dir = Path(self.config.get('reports', {}).get('export_path', './reports'))
+            reports_dir = Path(self.config.get('reports', {}).get('export_path', 'reports'))
             cutoff_date = datetime.now() - timedelta(days=retention_days)
             
             for report_file in reports_dir.glob('*'):
@@ -906,6 +1110,57 @@ class DASTMonitor:
             'avg_alerts_24h': avg_alerts or 0,
             'next_scheduled_scan': next_scan
         }
+
+    def run_manual_scan(self, domain: str, scan_type: str = 'standard') -> Optional[ScanResult]:
+        """Run a manual scan on a specific domain"""
+        self.logger.info(f"Starting manual scan for domain: {domain}")
+        
+        # Clean the domain (remove protocol if present)
+        clean_domain = domain.replace('https://', '').replace('http://', '').strip('/')
+        # Ensure we don't have any remaining protocol prefix
+        if clean_domain.startswith('//'):
+            clean_domain = clean_domain[2:]
+        
+        # Create a temporary ScanTarget for the manual scan
+        target = ScanTarget(
+            domain=clean_domain,
+            subdomains=[clean_domain],  # For manual scans, just scan the main domain
+            scan_type=scan_type,
+            priority=1
+        )
+        
+        try:
+            # Run the scan
+            result = self._run_zap_scan(target)
+            
+            if result:
+                # Save the result to database
+                self._save_scan_result(result)
+                
+                self.logger.info(f"Manual scan completed for {domain}: {result.total_alerts} alerts found")
+                
+                # Try to send notifications (optional for manual scans)
+                try:
+                    # Check if we're already in an async context
+                    try:
+                        loop = asyncio.get_running_loop()
+                        # We're already in an async context, skip notifications for manual scans
+                        self.logger.info("Skipping notifications for manual scan (already in async context)")
+                    except RuntimeError:
+                        # No running event loop, safe to use asyncio.run
+                        asyncio.run(self._send_notifications(result))
+                except Exception as e:
+                    # Skip notifications for manual scans if there are async issues
+                    self.logger.warning(f"Skipping notifications for manual scan: {str(e)}")
+                
+                return result
+            else:
+                self.logger.error(f"Manual scan failed for {domain}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error during manual scan of {domain}: {str(e)}")
+            return None
 
 if __name__ == '__main__':
     import argparse

@@ -1,6 +1,6 @@
 # DAST Continuous Monitoring Configuration
 
-# Database settings
+# Database settings  
 database: "dast_monitor.db"
 
 # Concurrent scanning limits
@@ -10,11 +10,11 @@ max_concurrent_scans: 3
 log_level: "INFO"
 log_file: "dast_monitor.log"
 
-# Scan scheduling based on priority
+# Scan scheduling based on priority (reduced for testing)
 scan_schedules:
-  high_priority: "0 */2 * * *"    # Every 2 hours (priority 4-5)
-  medium_priority: "0 */6 * * *"  # Every 6 hours (priority 2-3)
-  low_priority: "0 0 */1 * *"     # Daily (priority 1)
+  high_priority: "*/2 * * * *"    # Every 2 minutes (priority 4-5) - TESTING
+  medium_priority: "*/5 * * * *"  # Every 5 minutes (priority 2-3) - TESTING
+  low_priority: "*/10 * * * *"    # Every 10 minutes (priority 1) - TESTING
 
 # ZAP configuration
 zap:
@@ -83,7 +83,7 @@ subdomain_discovery:
 reports:
   retention_days: 90
   formats: ["json", "html", "xml", "sarif"]
-  export_path: "./reports"
+  export_path: "reports"
   
   # Remote storage options
   s3:

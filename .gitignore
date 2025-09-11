@@ -72,6 +72,8 @@ data/exports/
 # Security scan reports (keep structure, ignore content)
 data/reports/*
 !data/reports/.gitkeep
+reports/*
+!reports/.gitkeep
 monitoring/dashboards/*.json
 !monitoring/dashboards/example_*.json
 
