@@ -9,9 +9,8 @@ sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 alembic==1.13.1
 
-# Redis
-redis==5.0.1
-celery==5.3.4
+# Redis dependencies removed in bare version
+# celery==5.3.4  # Task queue removed
 
 # HTTP clients
 httpx==0.25.2
@@ -26,10 +25,10 @@ python-dotenv==1.0.0
 asyncio-mqtt==0.16.1
 asyncpg==0.29.0
 
-# Monitoring and metrics
-prometheus-client==0.19.0
-grafana-api==1.0.3
-influxdb-client==1.38.0
+# Monitoring dependencies removed in bare version
+# prometheus-client==0.19.0  # Removed
+# grafana-api==1.0.3  # Removed  
+# influxdb-client==1.38.0  # Removed
 
 # DNS and network tools
 dnspython==2.4.2

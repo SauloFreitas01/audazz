@@ -252,12 +252,7 @@ class DASTMonitor:
                 'timeout': 3600,
                 'memory': '2g'
             },
-            'grafana': {
-                'enabled': False,
-                'url': 'http://localhost:3000',
-                'api_key': '',
-                'dashboard_id': 'dast-monitor'
-            },
+            # Grafana configuration removed in bare version
             'siem': {
                 'enabled': False,
                 'webhook_url': '',
@@ -775,9 +770,7 @@ class DASTMonitor:
         conn.commit()
         conn.close()
         
-        # Send to Grafana if enabled
-        if self.config.get('grafana', {}).get('enabled', False):
-            self._send_to_grafana(result)
+        # Grafana integration removed in bare version
         
         # Send to SIEM if enabled and meets threshold
         if self._should_send_to_siem(result):
@@ -791,30 +784,7 @@ class DASTMonitor:
             # No running event loop, create new one for notifications
             asyncio.run(self._send_notifications(result))
 
-    def _send_to_grafana(self, result: ScanResult):
-        """Send metrics to Grafana"""
-        try:
-            grafana_config = self.config.get('grafana', {})
-            
-            metrics = {
-                'timestamp': result.timestamp.isoformat(),
-                'target': result.target,
-                'scan_type': result.scan_type,
-                'duration': result.duration,
-                'alerts_high': result.alerts_high,
-                'alerts_medium': result.alerts_medium,
-                'alerts_low': result.alerts_low,
-                'alerts_info': result.alerts_info,
-                'total_alerts': result.total_alerts,
-                'status': result.status
-            }
-            
-            # Send to Grafana (implementation depends on your Grafana setup)
-            # This could be via InfluxDB, Prometheus, or direct API calls
-            self.logger.info(f"Metrics sent to Grafana for {result.target}")
-            
-        except Exception as e:
-            self.logger.error(f"Error sending to Grafana: {e}")
+    # Grafana integration removed in bare version
 
     def _should_send_to_siem(self, result: ScanResult) -> bool:
         """Check if result should be sent to SIEM based on severity threshold"""

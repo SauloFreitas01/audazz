@@ -1,10 +1,10 @@
 #!/bin/bash
-# DAST Monitor Installation Script
+# DAST Monitor - Bare Version Installation Script
 
 set -e
 
-echo "🚀 DAST Monitor Installation Script"
-echo "=================================="
+echo "DAST Monitor - Bare Version Installation"
+echo "======================================="
 
 # Colors for output
 RED='\033[0;31m'
@@ -46,220 +46,153 @@ check_requirements() {
         error "Docker is required but not installed. Please install Docker first."
     fi
     
-    # Check Docker Compose (modern syntax)
+    # Check Docker Compose
     if ! docker compose version &> /dev/null; then
-        error "Docker Compose is required but not installed."
+        error "Docker Compose V2 is required but not available. Please install Docker Compose V2."
     fi
     
-    # Check Go
-    if ! command -v go &> /dev/null; then
-        error "Go is required for subdomain discovery tools but not installed."
-    fi
-    
-    # Check available disk space (minimum 10GB)
-    available_space=$(df . | tail -1 | awk '{print $4}')
-    if [ $available_space -lt 10485760 ]; then  # 10GB in KB
-        warning "Less than 10GB free space available. Consider freeing up disk space."
-    fi
-    
-    # Check available memory (minimum 4GB)
-    total_mem=$(free -m | awk '/^Mem:/{print $2}')
-    if [ $total_mem -lt 4096 ]; then
-        warning "Less than 4GB RAM available. Performance may be impacted."
-    fi
-    
-    success "System requirements check completed"
-}
-
-# Install Python dependencies
-install_python_dependencies() {
-    log "Installing Python dependencies..."
-    
-    # Check if Python is installed
-    if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
-        error "Python is required but not installed. Please install Python 3.9+ first."
-    fi
-    
-    # Use python3 if available, otherwise python
-    PYTHON_CMD="python3"
+    # Check Python 3
     if ! command -v python3 &> /dev/null; then
-        PYTHON_CMD="python"
+        warning "Python 3 is recommended for running maintenance scripts"
     fi
     
-    # Check Python version
-    PYTHON_VERSION=$($PYTHON_CMD --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
-    if [[ $(echo "$PYTHON_VERSION < 3.9" | bc -l) -eq 1 ]]; then
-        warning "Python version $PYTHON_VERSION detected. Python 3.9+ is recommended."
-    fi
-    
-    # Check if pip is available
-    if ! $PYTHON_CMD -m pip --version &> /dev/null; then
-        error "pip is required but not available. Please install pip first."
-    fi
-    
-    # Install required Python packages
-    log "Installing required Python packages..."
-    $PYTHON_CMD -m pip install --upgrade pip
-    $PYTHON_CMD -m pip install pyyaml requests croniter aiohttp
-    
-    success "Python dependencies installed"
+    success "System requirements check passed"
 }
 
-# Install subdomain discovery tools
-install_subdomain_tools() {
-    log "Installing subdomain discovery tools..."
+# Create directory structure
+create_directories() {
+    log "Creating directory structure..."
     
-    # Create tools directory
-    mkdir -p ./tools
-    
-    # Install subfinder
-    if ! command -v subfinder &> /dev/null; then
-        log "Installing subfinder..."
-        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+    # Core directories
+    if ! mkdir -p data logs reports; then
+        error "Failed to create core directories"
     fi
     
-    # Install assetfinder
-    if ! command -v assetfinder &> /dev/null; then
-        log "Installing assetfinder..."
-        go install github.com/tomnomnom/assetfinder@latest
+    # Docker deployment directories
+    if ! mkdir -p deployment/docker/{data,logs,reports}; then
+        error "Failed to create Docker directories"
     fi
     
-    # Install amass (optional)
-    if ! command -v amass &> /dev/null; then
-        log "Installing amass..."
-        CGO_ENABLED=0 go install -v github.com/owasp-amass/amass/v5/cmd/amass@main
-    fi
-    
-    success "Subdomain discovery tools installed"
+    success "Directory structure created"
 }
 
-# Setup directories and permissions
-setup_directories() {
-    log "Setting up directories and permissions..."
+# Setup configuration
+setup_config() {
+    log "Setting up configuration..."
     
-    # Create necessary directories
-    if ! mkdir -p data/{reports,logs,exports}; then
-        error "Failed to create data directories"
-    fi
-    if ! mkdir -p security/certificates; then
-        error "Failed to create security/certificates directory"
-    fi
-    if ! mkdir -p config/{grafana,prometheus,nginx}; then
-        error "Failed to create config directories"
+    # Check if config file exists
+    if [[ ! -f "config/dast_config.yaml" ]]; then
+        error "Configuration file config/dast_config.yaml not found"
     fi
     
-    # Set proper permissions (skip on Windows)
-    if [[ "$OSTYPE" != "msys" && "$OSTYPE" != "cygwin" ]]; then
-        chmod 755 data/
-        chmod 755 data/{reports,logs,exports}
-        chmod 700 security/certificates
+    # Create environment file template
+    cat > .env.example << 'EOF'
+# Google Workspace Webhook (Primary notification method)
+GOOGLE_WORKSPACE_WEBHOOK_URL=https://chat.googleapis.com/v1/spaces/YOUR_SPACE/messages?key=YOUR_KEY
+
+# Database (optional - can use file-based storage)
+POSTGRES_PASSWORD=secure-password-change-me
+
+# API Security
+ADMIN_API_TOKEN=admin-token-change-me
+READONLY_API_TOKEN=readonly-token-change-me
+
+# Data retention
+RETENTION_DAYS=90
+
+# Backup notification methods
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
+EOF
+
+    if [[ ! -f ".env" ]]; then
+        cp .env.example .env
+        warning "Created .env file from template. Please update with your values."
     fi
     
-    # Create .gitkeep files
-    touch data/reports/.gitkeep || warning "Failed to create data/reports/.gitkeep"
-    touch data/logs/.gitkeep || warning "Failed to create data/logs/.gitkeep"
-    touch security/certificates/.gitkeep || warning "Failed to create security/certificates/.gitkeep"
-    
-    success "Directories created and permissions set"
+    success "Configuration setup completed"
 }
 
-# Setup environment file
-setup_environment() {
-    log "Setting up environment configuration..."
+# Build and start services
+start_services() {
+    log "Building and starting services..."
     
-    if [ ! -f .env ]; then
-        if [ -f .env.example ]; then
-            if cp .env.example .env; then
-                warning "Created .env from example. Please customize it with your settings."
-            else
-                error "Failed to create .env file from .env.example"
-            fi
-        else
-            error ".env.example file not found"
+    cd deployment/docker
+    
+    # Build the application
+    if ! docker compose build; then
+        error "Failed to build Docker images"
+    fi
+    
+    # Start core services
+    if ! docker compose up -d; then
+        error "Failed to start services"
+    fi
+    
+    cd ../..
+    
+    success "Services started successfully"
+}
+
+# Wait for services to be ready
+wait_for_services() {
+    log "Waiting for services to be ready..."
+    
+    local max_attempts=30
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+            success "Services are ready"
+            return 0
         fi
-    else
-        log ".env file already exists, skipping creation"
-    fi
+        
+        log "Attempt $attempt/$max_attempts - Waiting for services..."
+        sleep 10
+        ((attempt++))
+    done
     
-    # Generate secure tokens if needed
-    if grep -q "change-me" .env; then
-        warning "Default tokens found in .env file. Consider updating them for security."
-        log "You can generate secure tokens with: openssl rand -hex 32"
-    fi
-    
-    success "Environment configuration ready"
+    error "Services failed to start within expected time"
 }
 
-# Pull required Docker images
-pull_images() {
-    log "Pulling required Docker images..."
-    
-    docker compose -f deployment/docker/docker-compose.yml pull
-    
-    success "Docker images pulled successfully"
+# Display installation summary
+show_summary() {
+    echo ""
+    echo "========================================="
+    echo "DAST Monitor - Bare Version Installation Complete!"
+    echo "========================================="
+    echo ""
+    echo "Services running:"
+    echo "- DAST Monitor API: http://localhost:8080"
+    echo "- PostgreSQL: localhost:5432 (if enabled)"
+    echo ""
+    echo "Quick start:"
+    echo "1. Update .env file with your Google Workspace webhook URL"
+    echo "2. Test the installation:"
+    echo "   python3 scripts/maintenance/process_zap_metrics.py --summary"
+    echo ""
+    echo "Management commands:"
+    echo "- View logs: docker compose -f deployment/docker/docker-compose.yml logs -f"
+    echo "- Stop services: docker compose -f deployment/docker/docker-compose.yml down"
+    echo "- Restart services: docker compose -f deployment/docker/docker-compose.yml restart"
+    echo ""
+    echo "For detailed documentation, see README_BARE.md"
+    echo ""
 }
 
-# Initialize database
-init_database() {
-    log "Initializing database..."
-    
-    # Start only database services
-    docker compose -f deployment/docker/docker-compose.yml up -d postgres redis
-    
-    # Wait for services to be ready
-    log "Waiting for database services to be ready..."
-    sleep 30
-    
-    # Run database migrations (if any)
-    # docker compose -f deployment/docker/docker-compose.yml exec dast-monitor python -m alembic upgrade head
-    
-    success "Database initialized"
-}
-
-# Setup monitoring
-setup_monitoring() {
-    log "Setting up monitoring and dashboards..."
-    
-    # Start Grafana and Prometheus
-    docker compose -f deployment/docker/docker-compose.yml up -d grafana prometheus
-    
-    # Wait for Grafana to be ready
-    sleep 30
-    
-    log "Grafana dashboard: http://localhost:3000"
-    log "Default credentials: admin / admin-change-me"
-    
-    success "Monitoring setup completed"
-}
-
-# Main installation function
+# Main installation flow
 main() {
-    echo
-    log "Starting DAST Monitor installation..."
-    echo
+    log "Starting DAST Monitor - Bare Version installation..."
     
     check_root
     check_requirements
-    install_python_dependencies
-    install_subdomain_tools
-    setup_directories
-    setup_environment
-    pull_images
-    init_database
-    setup_monitoring
+    create_directories
+    setup_config
+    start_services
+    wait_for_services
+    show_summary
     
-    echo
-    success "🎉 DAST Monitor installation completed successfully!"
-    echo
-    echo "Next steps:"
-    echo "1. Customize your .env file with your specific configuration"
-    echo "2. Start the full system: docker compose -f deployment/docker/docker-compose.yml up -d"
-    echo "3. Add your first target: python main.py --add-target yourapp.com"
-    echo "4. Access Grafana dashboard at http://localhost:3000"
-    echo "5. Check the README.md for detailed usage instructions"
-    echo
-    log "Installation completed at $(date)"
+    success "Installation completed successfully!"
 }
 
-# Run main function
+# Run installation
 main "$@"

@@ -1,20 +1,25 @@
-# DAST Continuous Monitoring Configuration
+# DAST Bare Version Configuration
+# Simplified version without Grafana, Prometheus, Redis, PostgreSQL
 
-# Database settings  
-database: "dast_monitor.db"
+# Local file-based storage
+storage:
+  type: "file"  # file-based storage instead of database
+  data_directory: "data"
+  reports_directory: "reports"
+  logs_directory: "logs"
 
 # Concurrent scanning limits
-max_concurrent_scans: 3
+max_concurrent_scans: 2
 
 # Logging configuration
 log_level: "INFO"
-log_file: "dast_monitor.log"
+log_file: "logs/dast_monitor.log"
 
-# Scan scheduling based on priority (reduced for testing)
+# Scan scheduling (file-based scheduling)
 scan_schedules:
-  high_priority: "*/2 * * * *"    # Every 2 minutes (priority 4-5) - TESTING
-  medium_priority: "*/5 * * * *"  # Every 5 minutes (priority 2-3) - TESTING
-  low_priority: "*/10 * * * *"    # Every 10 minutes (priority 1) - TESTING
+  high_priority: "*/10 * * * *"   # Every 10 minutes (priority 4-5)
+  medium_priority: "*/30 * * * *" # Every 30 minutes (priority 2-3)
+  low_priority: "0 */2 * * *"     # Every 2 hours (priority 1)
 
 # ZAP configuration
 zap:
@@ -23,104 +28,41 @@ zap:
   memory: "2g"
   max_scan_time: 1800  # 30 minutes max active scan
 
-# Grafana integration
-grafana:
+# Google Workspace (Google Chat) integration - PRIMARY NOTIFICATION METHOD
+google_workspace:
   enabled: true
-  url: "http://localhost:3000"
-  api_key: "${GRAFANA_API_KEY}"
-  dashboard_id: "dast-monitor"
-  datasource: "prometheus"
+  webhook_url: "${GOOGLE_WORKSPACE_WEBHOOK_URL}"
+  space_name: "Security Monitoring"
+  bot_name: "DAST Monitor"
+  severity_threshold: "medium"
+  message_style: "card"  # "simple", "card", "rich"
+  thread_alerts: true  # Group related alerts in threads
+  include_remediation: true
+  max_card_fields: 10
   
-  # Metrics to send
-  metrics:
-    - "dast_scan_duration"
-    - "dast_alerts_by_severity" 
-    - "dast_scan_status"
-    - "dast_targets_scanned"
+  # Card formatting options
+  card_options:
+    include_target_info: true
+    include_scan_duration: true
+    include_vulnerability_count: true
+    include_security_score: true
+    color_coding: true  # Use colors based on severity
+    
+  # Advanced features
+  advanced:
+    mention_users: []  # List of user emails to mention on high severity
+    tag_by_domain: true  # Tag messages by domain
+    create_threads_by_target: true  # Create separate threads per target
 
-# SIEM/SOAR integration
-siem:
-  enabled: false
-  type: "webhook"  # webhook, splunk, elasticsearch
-  webhook_url: "${SIEM_WEBHOOK_URL}"
-  severity_threshold: "medium"  # high, medium, low, info
-  
-  # Additional SIEM configurations
-  splunk:
-    host: ""
-    port: 8088
-    token: "${SPLUNK_TOKEN}"
-    index: "security"
-  
-  elasticsearch:
-    hosts: ["localhost:9200"]
-    index: "dast-alerts"
-    auth:
-      username: "${ES_USERNAME}"
-      password: "${ES_PASSWORD}"
-
-# Subdomain discovery
-subdomain_discovery:
-  enabled: true
-  tools: 
-    - "subfinder"
-    - "assetfinder" 
-    - "amass"
-  update_frequency: "0 0 * * 0"  # Weekly on Sunday
-  max_subdomains_per_domain: 50
-  timeout: 300  # 5 minutes per tool
-  
-  # Tool-specific configurations
-  subfinder:
-    config_file: "subfinder-config.yaml"
-    sources: "all"
-  
-  amass:
-    config_file: "amass-config.ini"
-    wordlist: "subdomains-top1million.txt"
-
-# Report management
-reports:
-  retention_days: 90
-  formats: ["json", "html", "xml", "sarif"]
-  export_path: "reports"
-  
-  # Remote storage options
-  s3:
-    enabled: false
-    bucket: "${S3_BUCKET}"
-    prefix: "dast-reports/"
-    region: "us-east-1"
-  
-  # Report templates
-  templates:
-    executive_summary: true
-    detailed_findings: true
-    trend_analysis: true
-
-# Vulnerability management integration
-vulnerability_management:
-  enabled: false
-  
-  # DefectDojo integration
-  defectdojo:
-    url: "${DEFECTDOJO_URL}"
-    api_key: "${DEFECTDOJO_API_KEY}"
-    product_id: 1
-    engagement_id: 1
-  
-  # JIRA integration
-  jira:
-    url: "${JIRA_URL}"
-    username: "${JIRA_USERNAME}"
-    api_token: "${JIRA_API_TOKEN}"
-    project_key: "SEC"
-    issue_type: "Bug"
-
-# Notification settings
+# Backup notification methods
 notifications:
-  enabled: true
-  
+  # Slack as backup
+  slack:
+    enabled: false
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+    channel: "#security-alerts"
+    severity_threshold: "high"
+    
   # Email notifications
   email:
     enabled: false
@@ -130,35 +72,58 @@ notifications:
     password: "${EMAIL_PASSWORD}"
     from_address: "dast-monitor@company.com"
     to_addresses: ["security-team@company.com"]
+
+# File-based subdomain discovery
+subdomain_discovery:
+  enabled: true
+  tools: 
+    - "subfinder"
+    - "assetfinder"
+  update_frequency: "0 0 * * 0"  # Weekly on Sunday
+  max_subdomains_per_domain: 50
+  timeout: 300  # 5 minutes per tool
+  output_file: "data/subdomains.json"
+
+# Report management (file-based)
+reports:
+  retention_days: 90
+  formats: ["json", "html", "xml", "sarif"]
+  export_path: "reports"
   
-  # Slack notifications
-  slack:
+  # File organization
+  organization:
+    by_domain: true
+    by_date: true
+    by_severity: false
+  
+  # Automatic cleanup
+  cleanup:
     enabled: true
-    webhook_url: "${SLACK_WEBHOOK_URL}"
-    channel: "#security-alerts"
-    severity_threshold: "medium"
-    message_format: "attachments"  # "attachments" or "blocks"
+    schedule: "0 3 * * *"  # Daily at 3 AM
+    
+  # Report templates
+  templates:
+    executive_summary: true
+    detailed_findings: true
+    trend_analysis: false  # Disabled without time-series DB
+
+# Simple file-based metrics
+metrics:
+  enabled: true
+  output_format: "json"
+  output_file: "data/metrics.json"
+  collection_interval: 300  # 5 minutes
   
-  # Google Chat notifications
-  google_chat:
-    enabled: true
-    webhook_url: "${GOOGLE_CHAT_WEBHOOK_URL}"
-    space_name: "Security Monitoring"
-    bot_name: "DAST Monitor"
-    severity_threshold: "medium"
-    message_style: "card"  # "simple", "card", "rich"
-    thread_alerts: true  # Group related alerts in threads
-    include_remediation: true
-    max_card_fields: 10
-  
-  # Microsoft Teams
-  teams:
-    enabled: false
-    webhook_url: "${TEAMS_WEBHOOK_URL}"
+  # What to track
+  track:
+    - scan_duration
+    - vulnerability_counts
+    - target_status
+    - scan_success_rate
+    - security_scores
 
 # Performance optimization
 performance:
-  # Scan optimization
   scan_optimization:
     enabled: true
     skip_static_content: true
@@ -166,7 +131,6 @@ performance:
     max_crawl_children: 100
     request_delay: 100  # milliseconds
     
-  # Resource limits
   resource_limits:
     max_memory_per_scan: "4g"
     max_cpu_per_scan: 2
@@ -174,10 +138,9 @@ performance:
 
 # Security settings
 security:
-  # Authentication for API access
   api_auth:
     enabled: true
-    method: "token"  # token, basic, oauth2
+    method: "token"
     tokens:
       - name: "admin"
         token: "${ADMIN_API_TOKEN}"
@@ -186,36 +149,25 @@ security:
         token: "${READONLY_API_TOKEN}" 
         permissions: ["read"]
   
-  # Network security
   network:
-    allowed_ips: ["127.0.0.1", "10.0.0.0/8"]
+    allowed_ips: ["127.0.0.1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
     rate_limiting:
       enabled: true
       requests_per_minute: 60
 
-# CI/CD Integration
+# CI/CD Integration (simplified)
 cicd:
   enabled: true
-  
-  # Quality gates
   quality_gates:
     fail_on_high: true
     fail_on_medium: false
     max_alerts_threshold: 50
     
-  # Pipeline integration
-  jenkins:
-    webhook_url: "${JENKINS_WEBHOOK_URL}"
-    job_token: "${JENKINS_JOB_TOKEN}"
-  
-  github_actions:
-    token: "${GITHUB_TOKEN}"
-    repository: "company/security-scans"
-  
-  gitlab:
-    url: "${GITLAB_URL}"
-    token: "${GITLAB_TOKEN}"
-    project_id: 123
+  # Output formats for CI/CD
+  output:
+    junit_xml: true
+    sarif: true
+    json_summary: true
 
 # Target-specific configurations
 target_profiles:
@@ -250,23 +202,18 @@ target_profiles:
     active_scan:
       policy: "API Scan Policy"
 
-# Monitoring and health checks
+# Health monitoring (simplified)
 monitoring:
   health_checks:
     enabled: true
     interval: 300  # 5 minutes
+    output_file: "data/health.json"
     
-  metrics:
-    enabled: true
-    port: 9090
-    endpoint: "/metrics"
-    
-  # System resources monitoring
   system:
     cpu_threshold: 80
     memory_threshold: 85
     disk_threshold: 90
-    
+
 # Development and testing
 development:
   debug_mode: false

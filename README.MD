@@ -1,6 +1,8 @@
-# DAST Continuous Monitoring System
+# DAST Monitor - Bare Version
 
-A comprehensive Dynamic Application Security Testing (DAST) monitoring platform designed for continuous security assessment of web applications and their subdomains. This system transforms the original CLI-based ZAP automation tool into an enterprise-grade monitoring solution with advanced features like subdomain discovery, Grafana dashboards, and SIEM integration.
+> **Note:** This is the **bare version** of the DAST monitoring system without Grafana, Prometheus, Redis dependencies. For the full version with all monitoring integrations, switch to the `main` branch. For detailed bare version documentation, see [README_BARE.md](README_BARE.md).
+
+A simplified Dynamic Application Security Testing (DAST) monitoring platform focused on core scanning functionality and Google Workspace notifications. This version removes complex monitoring dependencies while maintaining essential security scanning capabilities.
 
 ## 🚀 Features
 
