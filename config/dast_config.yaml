@@ -13,7 +13,7 @@ max_concurrent_scans: 2
 
 # Logging configuration
 log_level: "INFO"
-log_file: "logs/dast_monitor.log"
+log_file: "dast_monitor.log"
 
 # Scan scheduling (file-based scheduling)
 scan_schedules:

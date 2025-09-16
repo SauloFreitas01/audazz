@@ -18,9 +18,29 @@ import base64
 
 import requests
 import aiohttp
-from splunk_hec import SplunkHECHandler
-from elasticsearch import AsyncElasticsearch, Elasticsearch
-import boto3
+
+# Optional dependencies for SIEM integrations
+try:
+    from splunk_hec import SplunkHECHandler
+    SPLUNK_AVAILABLE = True
+except ImportError:
+    SPLUNK_AVAILABLE = False
+    SplunkHECHandler = None
+
+try:
+    from elasticsearch import AsyncElasticsearch, Elasticsearch
+    ELASTICSEARCH_AVAILABLE = True
+except ImportError:
+    ELASTICSEARCH_AVAILABLE = False
+    AsyncElasticsearch = None
+    Elasticsearch = None
+
+try:
+    import boto3
+    AWS_AVAILABLE = True
+except ImportError:
+    AWS_AVAILABLE = False
+    boto3 = None
 
 
 class SeverityLevel(Enum):
@@ -95,7 +115,7 @@ class SIEMIntegration:
         self.splunk_token = splunk_config.get('token', '')
         self.splunk_index = splunk_config.get('index', 'security')
         
-        if self.splunk_token:
+        if self.splunk_token and SPLUNK_AVAILABLE:
             self.splunk_handler = SplunkHECHandler(
                 host=self.splunk_host,
                 port=self.splunk_port,
@@ -104,6 +124,11 @@ class SIEMIntegration:
                 source='dast-monitor',
                 sourcetype='security:scan'
             )
+        elif self.splunk_token and not SPLUNK_AVAILABLE:
+            self.logger.warning("Splunk token provided but splunk_hec library not available. Install with: pip install splunk-hec")
+            self.splunk_handler = None
+        else:
+            self.splunk_handler = None
 
     def _init_elasticsearch(self):
         """Initialize Elasticsearch client"""
@@ -116,12 +141,16 @@ class SIEMIntegration:
         else:
             auth = None
         
-        self.es_client = AsyncElasticsearch(
-            hosts=hosts,
-            http_auth=auth,
-            verify_certs=es_config.get('verify_certs', False),
-            ssl_show_warn=es_config.get('ssl_show_warn', False)
-        )
+        if ELASTICSEARCH_AVAILABLE:
+            self.es_client = AsyncElasticsearch(
+                hosts=hosts,
+                http_auth=auth,
+                verify_certs=es_config.get('verify_certs', False),
+                ssl_show_warn=es_config.get('ssl_show_warn', False)
+            )
+        else:
+            self.logger.warning("Elasticsearch configuration found but elasticsearch library not available. Install with: pip install elasticsearch")
+            self.es_client = None
         
         self.es_index = es_config.get('index', 'dast-alerts')
 

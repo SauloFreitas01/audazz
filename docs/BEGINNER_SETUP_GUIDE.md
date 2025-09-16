@@ -1,15 +1,17 @@
-# 🚀 Beginner's Guide to DAST Continuous Monitoring System
+# 🚀 Beginner's Guide to DAST Monitor - Bare Version
 
-Welcome! This guide will help you get started with the DAST (Dynamic Application Security Testing) Continuous Monitoring System from scratch. No prior experience with security scanning required!
+Welcome! This guide will help you get started with the DAST (Dynamic Application Security Testing) Monitor - Bare Version from scratch. No prior experience with security scanning required!
+
+> **Note**: This is the simplified **bare version** without complex monitoring dependencies. For the full version with Grafana dashboards, switch to the `main` branch.
 
 ## 📋 What This Tool Does
 
-This tool automatically scans your websites and web applications for security vulnerabilities on a continuous basis. Think of it as a security guard that:
-- Monitors your websites 24/7
-- Finds security problems before hackers do
-- Creates beautiful dashboards to visualize security status
-- Sends alerts when issues are found
-- Integrates with your existing tools
+This tool automatically scans your websites and web applications for security vulnerabilities. Think of it as a security guard that:
+- Scans your websites for security problems
+- Finds vulnerabilities before hackers do
+- Sends rich notifications to Google Workspace (Google Chat)
+- Generates detailed security reports
+- Integrates with CI/CD pipelines
 
 ## 🎯 Prerequisites (What You Need First)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 DAST Continuous Monitoring System
-Automated security scanning tool for multiple domains with Grafana integration
+Automated security scanning tool for multiple domains with Google Workspace notifications
 """
 
 import asyncio
@@ -366,10 +366,52 @@ class DASTMonitor:
             targets.append(target)
         
         return targets
+    
+    def _add_scan_target(self, target: ScanTarget):
+        """Add a ScanTarget object to the monitoring list"""
+        # Set next scan time if not already set
+        if target.next_scan is None:
+            target.next_scan = self._calculate_next_scan(target.priority)
+        
+        # Add to targets list
+        self.targets.append(target)
+        
+        # Store in database
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO targets 
+            (domain, subdomains, scan_type, auth_config, custom_config, priority, last_scan, next_scan)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            target.domain,
+            json.dumps(target.subdomains),
+            target.scan_type,
+            json.dumps(target.auth_config) if target.auth_config else None,
+            target.custom_config,
+            target.priority,
+            target.last_scan.isoformat() if target.last_scan else None,
+            target.next_scan.isoformat() if target.next_scan else None
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        self.logger.info(f"Added target {target.domain} with {len(target.subdomains)} subdomains")
 
-    def add_target(self, domain: str, scan_type: str = 'standard', 
+    def add_target(self, domain_or_target, scan_type: str = 'standard', 
                    priority: int = 1, auth_config: Optional[Dict] = None):
         """Add a new target domain for monitoring"""
+        
+        # Handle both string domain and ScanTarget object
+        if isinstance(domain_or_target, ScanTarget):
+            target = domain_or_target
+            self._add_scan_target(target)
+            return
+        
+        # Original string-based logic
+        domain = domain_or_target
         
         # Clean the domain (remove protocol if present)
         clean_domain = domain.replace('https://', '').replace('http://', '').strip('/')
