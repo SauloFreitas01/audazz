@@ -1,9 +1,8 @@
 #!/bin/bash
-# DAST Monitor - Bare Version Installation Script
 
 set -e
 
-echo "DAST Monitor - Bare Version Installation"
+echo "DAST Monitor -  Installation"
 echo "======================================="
 
 # Colors for output
@@ -90,8 +89,6 @@ setup_config() {
 # Google Workspace Webhook (Primary notification method)
 GOOGLE_WORKSPACE_WEBHOOK_URL=https://chat.googleapis.com/v1/spaces/YOUR_SPACE/messages?key=YOUR_KEY
 
-# Database (optional - can use file-based storage)
-POSTGRES_PASSWORD=secure-password-change-me
 
 # API Security
 ADMIN_API_TOKEN=admin-token-change-me
@@ -100,8 +97,7 @@ READONLY_API_TOKEN=readonly-token-change-me
 # Data retention
 RETENTION_DAYS=90
 
-# Backup notification methods
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
+
 EOF
 
     if [[ ! -f ".env" ]]; then
@@ -163,7 +159,7 @@ show_summary() {
     echo ""
     echo "Services running:"
     echo "- DAST Monitor API: http://localhost:8080"
-    echo "- PostgreSQL: localhost:5432 (if enabled)"
+    echo 
     echo ""
     echo "Quick start:"
     echo "1. Update .env file with your Google Workspace webhook URL"

@@ -16,7 +16,6 @@ fi
 
 # Set default environment variables if not provided
 export GOOGLE_WORKSPACE_WEBHOOK_URL=${GOOGLE_WORKSPACE_WEBHOOK_URL:-""}
-export POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-"secure-password-change-me"}
 export ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-"admin-token-change-me"}
 export READONLY_API_TOKEN=${READONLY_API_TOKEN:-"readonly-token-change-me"}
 export RETENTION_DAYS=${RETENTION_DAYS:-"90"}

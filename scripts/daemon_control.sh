@@ -1,11 +1,10 @@
 #!/bin/bash
 
-# DAST Monitor Daemon Control Script
-# Manages the continuous monitoring daemon for the bare version
+
 
 set -e
 
-DAEMON_NAME="dast-monitor-daemon"
+DAEMON_NAME="autoDAST-daemon"
 DAEMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DAEMON_SCRIPT="app/daemon/monitor_daemon.py"
 PID_FILE="data/daemon.pid"

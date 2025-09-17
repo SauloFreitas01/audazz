@@ -30,8 +30,6 @@ git checkout bare
 
 # Set environment variables
 export GOOGLE_WORKSPACE_WEBHOOK_URL="https://chat.googleapis.com/v1/spaces/.../messages?key=..."
-export POSTGRES_PASSWORD="your-secure-password"
-export ADMIN_API_TOKEN="your-admin-token"
 ```
 
 ### 2. Start Services
@@ -92,7 +90,6 @@ metrics:
 Uses `deployment/docker/docker-compose.bare.yml` with minimal services:
 
 - **dast-monitor**: Main application
-- **postgres**: Database (simplified, can be removed for fully file-based)
 - **subdomain-discovery**: Optional subdomain enumeration
 - **cleanup**: Automated cleanup service
 
