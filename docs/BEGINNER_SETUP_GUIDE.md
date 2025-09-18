@@ -2,14 +2,14 @@
 
 Welcome! This guide will help you get started with the DAST (Dynamic Application Security Testing) Monitor - Bare Version from scratch. No prior experience with security scanning required!
 
-> **Note**: This is the simplified **bare version** without complex monitoring dependencies. For the full version with Grafana dashboards, switch to the `main` branch.
+> **Note**: This is the simplified **bare version** without Grafana, Prometheus, Redis, or database dependencies. It focuses on core DAST functionality with Google Workspace notifications. For the full version with advanced monitoring, switch to the `main` branch.
 
 ## 📋 What This Tool Does
 
 This tool automatically scans your websites and web applications for security vulnerabilities. Think of it as a security guard that:
 - Scans your websites for security problems
 - Finds vulnerabilities before hackers do
-- Sends rich notifications to Google Workspace (Google Chat)
+- Sends rich card notifications to Google Workspace (Google Chat)
 - Generates detailed security reports
 - Integrates with CI/CD pipelines
 
@@ -91,15 +91,19 @@ Open `.env` file in a text editor and change these passwords:
 
 ```bash
 # Change these default passwords for security!
-POSTGRES_PASSWORD=your-secure-database-password-here
-REDIS_PASSWORD=your-secure-redis-password-here
-GRAFANA_ADMIN_PASSWORD=your-grafana-password-here
+# Database dependencies removed in bare version
+# POSTGRES_PASSWORD=your-secure-database-password-here  # Not needed
+# REDIS_PASSWORD=your-secure-redis-password-here        # Not needed
+# GRAFANA_ADMIN_PASSWORD=your-grafana-password-here     # Not needed
+
+# Google Workspace integration
+GOOGLE_WORKSPACE_WEBHOOK_URL=https://chat.googleapis.com/v1/spaces/.../messages?key=...
 
 # API tokens (generate random strings)
 ADMIN_API_TOKEN=admin-token-your-random-string-here
 READONLY_API_TOKEN=readonly-token-your-random-string-here
 
-# Optional: Add Slack webhook for notifications
+# Optional: Add Slack webhook as backup notification
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
 ```
 
@@ -126,18 +130,8 @@ mkdir -p ../../security/certificates
 # Pull all required images (this may take 10-15 minutes)
 docker-compose pull
 
-# Start the database services first
-docker-compose up -d postgres redis
-
-# Wait 30 seconds for databases to initialize
-# Windows: timeout 30
-# Linux/Mac: sleep 30
-
-# Start monitoring services
-docker-compose up -d grafana prometheus
-
-# Finally, start the main application
-docker-compose up -d dast-monitor
+# Start the bare version services (no databases needed)
+docker-compose up -d
 ```
 
 ## 🎯 Step 5: Verify Installation
@@ -151,13 +145,9 @@ You should see all services as "Up" or "healthy".
 
 ### Access Your Dashboards
 
-1. **Grafana Dashboard**: [http://localhost:3000](http://localhost:3000)
-   - Username: `admin`
-   - Password: (what you set in `.env`)
-
-2. **API Endpoint**: [http://localhost:8080](http://localhost:8080)
-
-3. **Prometheus Metrics**: [http://localhost:9091](http://localhost:9091)
+1. **DAST Monitor API**: [http://localhost:8080](http://localhost:8080)
+   - Health check: [http://localhost:8080/health](http://localhost:8080/health)
+   - API documentation: [http://localhost:8080/docs](http://localhost:8080/docs)
 
 ## 🎯 Step 6: Add Your First Target
 
@@ -189,19 +179,18 @@ python main.py --scan example.com
 
 ### Monitor Progress:
 - Watch logs: `docker-compose logs -f dast-monitor`
-- Check Grafana dashboard for real-time updates
+- Check Google Workspace for security notifications
 - Reports will be saved in `data/reports/`
 
 ## 📊 Step 8: Understanding Your Results
 
-### Grafana Dashboard
-1. Open [http://localhost:3000](http://localhost:3000)
-2. Look for "DAST Security Monitoring" dashboard
-3. You'll see:
-   - **Total scans**: How many scans completed
-   - **Vulnerabilities found**: Count by severity
-   - **Recent alerts**: Latest security issues
-   - **Scan trends**: Performance over time
+### Google Workspace Notifications
+1. Configure your webhook URL in the `.env` file
+2. Security notifications will be sent as rich cards showing:
+   - **Security Score**: Overall security rating (0-100)
+   - **Vulnerability Breakdown**: Count by severity level
+   - **Top Vulnerabilities**: Most critical issues found
+   - **Recommendations**: Action items based on findings
 
 ### Vulnerability Severity Levels:
 - 🔴 **High**: Critical issues requiring immediate attention
@@ -236,10 +225,10 @@ docker system prune -f
 find data/reports/ -name "*.html" -mtime +30 -delete
 ```
 
-### "Can't access Grafana"
-1. Ensure Docker is running
-2. Check if port 3000 is blocked by firewall
-3. Try accessing via IP: `http://127.0.0.1:3000`
+### "Not receiving notifications"
+1. Verify webhook URL is correctly set: `echo $GOOGLE_WORKSPACE_WEBHOOK_URL`
+2. Test webhook manually: `curl -X POST "$GOOGLE_WORKSPACE_WEBHOOK_URL" -H "Content-Type: application/json" -d '{"text": "Test"}'`
+3. Check application logs: `docker-compose logs dast-monitor`
 
 ### "Scans failing"
 1. Check if target website is accessible
@@ -265,7 +254,15 @@ scan_schedules:
 
 ## 🔔 Setting Up Notifications
 
-### Slack Notifications:
+### Google Workspace Notifications (Primary):
+1. Create a webhook in your Google Chat space
+2. Add to your `.env` file:
+   ```bash
+   GOOGLE_WORKSPACE_WEBHOOK_URL=https://chat.googleapis.com/v1/spaces/.../messages?key=...
+   ```
+3. Restart services: `docker-compose restart`
+
+### Slack Notifications (Backup):
 1. Create a Slack app and webhook URL
 2. Add to your `.env` file:
    ```bash
@@ -321,7 +318,7 @@ docker system prune -f    # Clean up unused images
 1. Configure custom scan profiles
 2. Integrate with CI/CD pipelines
 3. Set up email alerts
-4. Create custom Grafana dashboards
+4. Configure advanced Google Workspace message formats
 
 ### Advanced Level:
 1. Deploy with SSL/HTTPS

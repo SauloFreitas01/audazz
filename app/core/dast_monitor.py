@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from concurrent.futures import ThreadPoolExecutor
 import requests
-import sqlite3
+import pickle
 from croniter import croniter
 
 # Import integrations
@@ -60,14 +60,17 @@ class DASTMonitor:
         self._create_directory_structure()
         
         # Set proper paths for data files
-        self.db_path = os.path.join('data', 'db', self.config.get('database', 'dast_monitor.db'))
+        self.data_dir = os.path.join('data')
+        self.targets_file = os.path.join(self.data_dir, 'targets.json')
+        self.scan_results_file = os.path.join(self.data_dir, 'scan_results.json')
+        self.subdomains_file = os.path.join(self.data_dir, 'subdomains.json')
         self.running = False
-        
+
         # Setup logging
         self._setup_logging()
-        
-        # Initialize database
-        self._init_database()
+
+        # Initialize file-based storage
+        self._init_file_storage()
         
         # Load targets
         self.targets = self._load_targets()
@@ -82,6 +85,40 @@ class DASTMonitor:
         self._init_integrations()
         
         self.logger.info("DAST Monitor initialized")
+
+    def _save_target_to_file(self, target: ScanTarget):
+        """Save target to file"""
+        targets_data = self._load_json_file(self.targets_file)
+
+        target_data = {
+            'domain': target.domain,
+            'subdomains': target.subdomains,
+            'scan_type': target.scan_type,
+            'auth_config': target.auth_config,
+            'custom_config': target.custom_config,
+            'priority': target.priority,
+            'last_scan': target.last_scan.isoformat() if target.last_scan else None,
+            'next_scan': target.next_scan.isoformat() if target.next_scan else None,
+            'created_at': datetime.now().isoformat()
+        }
+
+        # Update existing or add new
+        found = False
+        for i, data in enumerate(targets_data):
+            if data['domain'] == target.domain:
+                targets_data[i] = target_data
+                found = True
+                break
+
+        if not found:
+            targets_data.append(target_data)
+
+        self._save_json_file(self.targets_file, targets_data)
+
+    def _target_exists(self, domain: str) -> bool:
+        """Check if target already exists"""
+        targets_data = self._load_json_file(self.targets_file)
+        return any(data['domain'] == domain for data in targets_data)
 
     def _setup_logging(self):
         log_level = self.config.get('log_level', 'INFO')
@@ -238,133 +275,114 @@ class DASTMonitor:
 
     def _create_default_config(self) -> Dict:
         default_config = {
-            'database': 'dast_monitor.db',
-            'max_concurrent_scans': 3,
+            'storage': {
+                'type': 'file',
+                'data_directory': 'data',
+                'reports_directory': 'reports',
+                'logs_directory': 'logs'
+            },
+            'max_concurrent_scans': 2,
             'log_level': 'INFO',
             'log_file': 'dast_monitor.log',
             'scan_schedules': {
-                'high_priority': '0 */2 * * *',  # Every 2 hours
-                'medium_priority': '0 */6 * * *',  # Every 6 hours
-                'low_priority': '0 0 */1 * *'  # Daily
+                'high_priority': '*/10 * * * *',   # Every 10 minutes
+                'medium_priority': '*/30 * * * *', # Every 30 minutes
+                'low_priority': '0 */2 * * *'     # Every 2 hours
             },
             'zap': {
                 'version': '2.14.0',
                 'timeout': 3600,
                 'memory': '2g'
             },
-            # Grafana configuration removed in bare version
-            'siem': {
-                'enabled': False,
-                'webhook_url': '',
-                'severity_threshold': 'medium'
+            'google_workspace': {
+                'enabled': True,
+                'webhook_url': '${GOOGLE_WORKSPACE_WEBHOOK_URL}',
+                'space_name': 'Security Monitoring',
+                'bot_name': 'DAST Monitor',
+                'severity_threshold': 'medium',
+                'message_style': 'card'
             },
             'subdomain_discovery': {
                 'enabled': True,
                 'tools': ['subfinder', 'assetfinder'],
-                'update_frequency': '0 0 * * 0'  # Weekly
+                'update_frequency': '0 0 * * 0',  # Weekly
+                'output_file': 'data/subdomains.json'
             },
             'reports': {
                 'retention_days': 90,
-                'formats': ['json', 'html', 'xml'],
+                'formats': ['json', 'html', 'xml', 'sarif'],
                 'export_path': 'reports'
+            },
+            'metrics': {
+                'enabled': True,
+                'output_format': 'json',
+                'output_file': 'data/metrics.json'
             }
         }
-        
+
         with open(self.config_path, 'w') as f:
             yaml.dump(default_config, f, default_flow_style=False)
-            
+
         return default_config
 
-    def _init_database(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Targets table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS targets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                domain TEXT UNIQUE NOT NULL,
-                subdomains TEXT,
-                scan_type TEXT DEFAULT 'standard',
-                auth_config TEXT,
-                custom_config TEXT,
-                priority INTEGER DEFAULT 1,
-                last_scan TIMESTAMP,
-                next_scan TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Scan results table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS scan_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                target TEXT NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                scan_type TEXT,
-                duration REAL,
-                alerts_high INTEGER DEFAULT 0,
-                alerts_medium INTEGER DEFAULT 0,
-                alerts_low INTEGER DEFAULT 0,
-                alerts_info INTEGER DEFAULT 0,
-                total_alerts INTEGER DEFAULT 0,
-                status TEXT,
-                report_path TEXT,
-                error_message TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Subdomains table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS discovered_subdomains (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                domain TEXT NOT NULL,
-                subdomain TEXT NOT NULL,
-                discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_verified TIMESTAMP,
-                status TEXT DEFAULT 'active',
-                UNIQUE(domain, subdomain)
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
+    def _init_file_storage(self):
+        """Initialize file-based storage system"""
+        # Ensure data directory exists
+        os.makedirs(self.data_dir, exist_ok=True)
+
+        # Initialize empty files if they don't exist
+        for file_path in [self.targets_file, self.scan_results_file, self.subdomains_file]:
+            if not os.path.exists(file_path):
+                self._save_json_file(file_path, [])
+
+    def _load_json_file(self, file_path: str) -> List:
+        """Load data from JSON file"""
+        try:
+            if os.path.exists(file_path):
+                with open(file_path, 'r') as f:
+                    return json.load(f)
+            return []
+        except Exception as e:
+            self.logger.error(f"Error loading {file_path}: {e}")
+            return []
+
+    def _save_json_file(self, file_path: str, data: List):
+        """Save data to JSON file"""
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=2, default=str)
+        except Exception as e:
+            self.logger.error(f"Error saving {file_path}: {e}")
 
     def _init_integrations(self):
         """Initialize notification and monitoring integrations"""
-        # Google Chat integration
-        google_chat_config = self.config.get('notifications', {}).get('google_chat', {})
-        self.google_chat = GoogleChatIntegration(google_chat_config)
-        
+        # Google Chat integration (now called Google Workspace)
+        google_workspace_config = self.config.get('google_workspace', {})
+        self.google_chat = GoogleChatIntegration(google_workspace_config)
+
         if self.google_chat.enabled:
-            self.logger.info("Google Chat integration enabled")
+            self.logger.info("Google Workspace integration enabled")
         else:
-            self.logger.info("Google Chat integration disabled")
+            self.logger.info("Google Workspace integration disabled")
 
     def _load_targets(self) -> List[ScanTarget]:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM targets')
-        rows = cursor.fetchall()
-        conn.close()
-        
+        """Load targets from JSON file"""
+        targets_data = self._load_json_file(self.targets_file)
         targets = []
-        for row in rows:
+
+        for data in targets_data:
             target = ScanTarget(
-                domain=row[1],
-                subdomains=json.loads(row[2]) if row[2] else [],
-                scan_type=row[3],
-                auth_config=json.loads(row[4]) if row[4] else None,
-                custom_config=row[5],
-                priority=row[6],
-                last_scan=datetime.fromisoformat(row[7]) if row[7] else None,
-                next_scan=datetime.fromisoformat(row[8]) if row[8] else None
+                domain=data['domain'],
+                subdomains=data.get('subdomains', []),
+                scan_type=data.get('scan_type', 'standard'),
+                auth_config=data.get('auth_config'),
+                custom_config=data.get('custom_config'),
+                priority=data.get('priority', 1),
+                last_scan=datetime.fromisoformat(data['last_scan']) if data.get('last_scan') else None,
+                next_scan=datetime.fromisoformat(data['next_scan']) if data.get('next_scan') else None
             )
             targets.append(target)
-        
+
         return targets
     
     def _add_scan_target(self, target: ScanTarget):
@@ -376,27 +394,8 @@ class DASTMonitor:
         # Add to targets list
         self.targets.append(target)
         
-        # Store in database
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO targets 
-            (domain, subdomains, scan_type, auth_config, custom_config, priority, last_scan, next_scan)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            target.domain,
-            json.dumps(target.subdomains),
-            target.scan_type,
-            json.dumps(target.auth_config) if target.auth_config else None,
-            target.custom_config,
-            target.priority,
-            target.last_scan.isoformat() if target.last_scan else None,
-            target.next_scan.isoformat() if target.next_scan else None
-        ))
-        
-        conn.commit()
-        conn.close()
+        # Store in file
+        self._save_target_to_file(target)
         
         self.logger.info(f"Added target {target.domain} with {len(target.subdomains)} subdomains")
 
@@ -432,30 +431,13 @@ class DASTMonitor:
             next_scan=self._calculate_next_scan(priority)
         )
         
-        # Save to database
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('''
-                INSERT INTO targets (domain, subdomains, scan_type, auth_config, priority, next_scan)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                target.domain,
-                json.dumps(target.subdomains),
-                target.scan_type,
-                json.dumps(target.auth_config) if target.auth_config else None,
-                target.priority,
-                target.next_scan.isoformat()
-            ))
-            conn.commit()
+        # Save to file
+        if not self._target_exists(target.domain):
             self.targets.append(target)
+            self._save_target_to_file(target)
             self.logger.info(f"Added target: {clean_domain}")
-            
-        except sqlite3.IntegrityError:
+        else:
             self.logger.warning(f"Target {domain} already exists")
-        finally:
-            conn.close()
 
     def _discover_subdomains(self, domain: str) -> List[str]:
         """Discover subdomains for a given domain"""
@@ -487,26 +469,30 @@ class DASTMonitor:
             if subdomain and subdomain.strip() and domain in subdomain:
                 valid_subdomains.append(subdomain.strip())
         
-        # Save to database
+        # Save to file
         self._save_discovered_subdomains(domain, valid_subdomains)
         
         return valid_subdomains
 
     def _save_discovered_subdomains(self, domain: str, subdomains: List[str]):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
+        """Save discovered subdomains to file"""
+        subdomains_data = self._load_json_file(self.subdomains_file)
+
         for subdomain in subdomains:
             try:
-                cursor.execute('''
-                    INSERT OR IGNORE INTO discovered_subdomains (domain, subdomain)
-                    VALUES (?, ?)
-                ''', (domain, subdomain))
+                # Check if subdomain already exists
+                exists = any(s['domain'] == domain and s['subdomain'] == subdomain for s in subdomains_data)
+                if not exists:
+                    subdomains_data.append({
+                        'domain': domain,
+                        'subdomain': subdomain,
+                        'discovered_at': datetime.now().isoformat(),
+                        'status': 'active'
+                    })
             except Exception as e:
                 self.logger.error(f"Error saving subdomain {subdomain}: {e}")
-        
-        conn.commit()
-        conn.close()
+
+        self._save_json_file(self.subdomains_file, subdomains_data)
 
     def _calculate_next_scan(self, priority: int) -> datetime:
         """Calculate next scan time based on priority"""
@@ -794,23 +780,26 @@ class DASTMonitor:
         )
 
     def _save_scan_result(self, result: ScanResult):
-        """Save scan result to database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO scan_results 
-            (target, timestamp, scan_type, duration, alerts_high, alerts_medium, 
-             alerts_low, alerts_info, total_alerts, status, report_path, error_message)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            result.target, result.timestamp.isoformat(), result.scan_type, result.duration,
-            result.alerts_high, result.alerts_medium, result.alerts_low, result.alerts_info,
-            result.total_alerts, result.status, result.report_path, result.error_message
-        ))
-        
-        conn.commit()
-        conn.close()
+        """Save scan result to file"""
+        scan_results = self._load_json_file(self.scan_results_file)
+
+        result_data = {
+            'target': result.target,
+            'timestamp': result.timestamp.isoformat(),
+            'scan_type': result.scan_type,
+            'duration': result.duration,
+            'alerts_high': result.alerts_high,
+            'alerts_medium': result.alerts_medium,
+            'alerts_low': result.alerts_low,
+            'alerts_info': result.alerts_info,
+            'total_alerts': result.total_alerts,
+            'status': result.status,
+            'report_path': result.report_path,
+            'error_message': result.error_message
+        }
+
+        scan_results.append(result_data)
+        self._save_json_file(self.scan_results_file, scan_results)
         
         # Grafana integration removed in bare version
         
@@ -982,7 +971,7 @@ class DASTMonitor:
                         # Update target's next scan time
                         target.last_scan = datetime.now()
                         target.next_scan = self._calculate_next_scan(target.priority)
-                        self._update_target_in_db(target)
+                        self._update_target_in_file(target)
                         
                         self.logger.info(f"Scan completed for {target.domain}: {result.total_alerts} alerts found")
                         
@@ -999,23 +988,26 @@ class DASTMonitor:
                 self.logger.error(f"Error in monitoring loop: {e}")
                 await asyncio.sleep(60)
 
-    def _update_target_in_db(self, target: ScanTarget):
-        """Update target information in database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE targets 
-            SET last_scan = ?, next_scan = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE domain = ?
-        ''', (
-            target.last_scan.isoformat() if target.last_scan else None,
-            target.next_scan.isoformat() if target.next_scan else None,
-            target.domain
-        ))
-        
-        conn.commit()
-        conn.close()
+    def _update_target_in_file(self, target: ScanTarget):
+        """Update target information in file"""
+        targets_data = self._load_json_file(self.targets_file)
+
+        for i, data in enumerate(targets_data):
+            if data['domain'] == target.domain:
+                targets_data[i] = {
+                    'domain': target.domain,
+                    'subdomains': target.subdomains,
+                    'scan_type': target.scan_type,
+                    'auth_config': target.auth_config,
+                    'custom_config': target.custom_config,
+                    'priority': target.priority,
+                    'last_scan': target.last_scan.isoformat() if target.last_scan else None,
+                    'next_scan': target.next_scan.isoformat() if target.next_scan else None,
+                    'updated_at': datetime.now().isoformat()
+                }
+                break
+
+        self._save_json_file(self.targets_file, targets_data)
 
     async def _run_maintenance(self):
         """Run periodic maintenance tasks"""
@@ -1039,15 +1031,8 @@ class DASTMonitor:
                 new_subdomains = self._discover_subdomains(target.domain)
                 if new_subdomains != target.subdomains:
                     target.subdomains = new_subdomains
-                    # Update in database
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        UPDATE targets SET subdomains = ?, updated_at = CURRENT_TIMESTAMP 
-                        WHERE domain = ?
-                    ''', (json.dumps(new_subdomains), target.domain))
-                    conn.commit()
-                    conn.close()
+                    # Update in file
+                    self._update_target_in_file(target)
                     
                     self.logger.info(f"Updated subdomains for {target.domain}: {len(new_subdomains)} found")
             except Exception as e:
@@ -1094,32 +1079,40 @@ class DASTMonitor:
 
     def get_status(self) -> Dict:
         """Get current status of the monitoring system"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
+        targets_data = self._load_json_file(self.targets_file)
+        scan_results = self._load_json_file(self.scan_results_file)
+
         # Get target count
-        cursor.execute('SELECT COUNT(*) FROM targets')
-        target_count = cursor.fetchone()[0]
-        
+        target_count = len(targets_data)
+
         # Get recent scans (last 24 hours)
-        cursor.execute('''
-            SELECT COUNT(*), AVG(total_alerts) 
-            FROM scan_results 
-            WHERE timestamp > datetime('now', '-1 day')
-        ''')
-        recent_scans, avg_alerts = cursor.fetchone()
-        
+        cutoff_time = datetime.now() - timedelta(hours=24)
+        recent_scans = []
+        total_alerts = 0
+
+        for result in scan_results:
+            try:
+                result_time = datetime.fromisoformat(result['timestamp'])
+                if result_time > cutoff_time:
+                    recent_scans.append(result)
+                    total_alerts += result.get('total_alerts', 0)
+            except (ValueError, TypeError):
+                continue
+
+        avg_alerts = total_alerts / len(recent_scans) if recent_scans else 0
+
         # Get next scheduled scan
-        cursor.execute('SELECT MIN(next_scan) FROM targets WHERE next_scan IS NOT NULL')
-        next_scan = cursor.fetchone()[0]
-        
-        conn.close()
-        
+        next_scan = None
+        for target_data in targets_data:
+            if target_data.get('next_scan'):
+                if next_scan is None or target_data['next_scan'] < next_scan:
+                    next_scan = target_data['next_scan']
+
         return {
             'status': 'running' if self.running else 'stopped',
             'targets': target_count,
-            'recent_scans_24h': recent_scans or 0,
-            'avg_alerts_24h': avg_alerts or 0,
+            'recent_scans_24h': len(recent_scans),
+            'avg_alerts_24h': avg_alerts,
             'next_scheduled_scan': next_scan
         }
 

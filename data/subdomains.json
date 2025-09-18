@@ -1,0 +1,62 @@
+[
+  {
+    "domain": "example.com",
+    "subdomain": "m.example.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  },
+  {
+    "domain": "example.com",
+    "subdomain": "as207960 test intermediate - example.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  },
+  {
+    "domain": "example.com",
+    "subdomain": "user@example.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  },
+  {
+    "domain": "example.com",
+    "subdomain": "m.testexample.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  },
+  {
+    "domain": "example.com",
+    "subdomain": "example.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  },
+  {
+    "domain": "example.com",
+    "subdomain": "products.example.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  },
+  {
+    "domain": "example.com",
+    "subdomain": "dev.example.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  },
+  {
+    "domain": "example.com",
+    "subdomain": "support.example.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  },
+  {
+    "domain": "example.com",
+    "subdomain": "www.example.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  },
+  {
+    "domain": "example.com",
+    "subdomain": "subjectname@example.com",
+    "discovered_at": "2025-09-18T16:48:55.307277",
+    "status": "active"
+  }
+]

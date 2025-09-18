@@ -161,9 +161,9 @@ python scripts/maintenance/process_zap_metrics.py \
     --output-junit results.xml \
     --check-gates
 
-# Grafana JSON metrics
+# JSON metrics export
 python scripts/maintenance/process_zap_metrics.py \
-    --output-grafana metrics.json
+    --output-metrics metrics.json
 ```
 
 ### Quality Gates

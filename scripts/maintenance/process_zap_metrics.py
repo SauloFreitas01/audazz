@@ -168,148 +168,39 @@ class ZAPMetricsProcessor:
         # Score mínimo: 0
         return max(0, score)
     
-    def export_to_grafana_json(self, metrics: Dict, output_file: str = None) -> str:
-        """Exporta métricas no formato para Grafana"""
+    def export_to_metrics_json(self, metrics: Dict, output_file: str = None) -> str:
+        """Exporta métricas no formato JSON simples"""
         if not output_file:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_file = f"zap-metrics-{timestamp}.json"
-        
-        grafana_metrics = {
+
+        metrics_export = {
             "timestamp": metrics.get('timestamp'),
             "target": metrics.get('target_url'),
-            "metrics": [
-                {
-                    "name": "zap_vulnerabilities_total",
-                    "value": metrics.get('total_alerts', 0),
-                    "labels": {"target_url": metrics.get('target_url', 'unknown')}
-                },
-                {
-                    "name": "zap_high_risk_total",
-                    "value": metrics.get('high_risk', 0),
-                    "labels": {"risk_level": "High", "target_url": metrics.get('target_url')}
-                },
-                {
-                    "name": "zap_medium_risk_total", 
-                    "value": metrics.get('medium_risk', 0),
-                    "labels": {"risk_level": "Medium", "target_url": metrics.get('target_url')}
-                },
-                {
-                    "name": "zap_low_risk_total",
-                    "value": metrics.get('low_risk', 0),
-                    "labels": {"risk_level": "Low", "target_url": metrics.get('target_url')}
-                },
-                {
-                    "name": "zap_security_score",
-                    "value": metrics.get('security_score', 0),
-                    "labels": {"target_url": metrics.get('target_url')}
-                },
-                {
-                    "name": "zap_scan_status",
-                    "value": 1 if metrics.get('scan_completed') else 0,
-                    "labels": {"target_url": metrics.get('target_url')}
-                }
-            ]
+            "scan_summary": {
+                "total_vulnerabilities": metrics.get('total_alerts', 0),
+                "high_risk": metrics.get('high_risk', 0),
+                "medium_risk": metrics.get('medium_risk', 0),
+                "low_risk": metrics.get('low_risk', 0),
+                "informational": metrics.get('informational', 0),
+                "security_score": metrics.get('security_score', 0),
+                "scan_completed": metrics.get('scan_completed', False)
+            },
+            "vulnerability_details": metrics.get('vulnerability_details', []),
+            "owasp_categories": metrics.get('owasp_categories', {}),
+            "report_path": metrics.get('report_path', '')
         }
-        
+
         output_path = self.reports_dir / output_file
         with open(output_path, 'w') as f:
-            json.dump(grafana_metrics, f, indent=2)
-        
-        logger.info(f"Métricas para Grafana salvas em: {output_path}")
+            json.dump(metrics_export, f, indent=2)
+
+        logger.info(f"Métricas exportadas para: {output_path}")
         return str(output_path)
     
-    def send_to_prometheus_pushgateway(self, metrics: Dict, gateway_url: str) -> bool:
-        """Envia métricas para Prometheus Push Gateway"""
-        try:
-            # Formato Prometheus
-            prometheus_metrics = []
-            target_url = metrics.get('target_url', 'unknown').replace('://', '_').replace('.', '_')
-            
-            prometheus_metrics.extend([
-                f'zap_vulnerabilities_total{{target_url="{metrics.get("target_url")}"}} {metrics.get("total_alerts", 0)}',
-                f'zap_high_risk_total{{target_url="{metrics.get("target_url")}"}} {metrics.get("high_risk", 0)}',
-                f'zap_medium_risk_total{{target_url="{metrics.get("target_url")}"}} {metrics.get("medium_risk", 0)}',
-                f'zap_low_risk_total{{target_url="{metrics.get("target_url")}"}} {metrics.get("low_risk", 0)}',
-                f'zap_security_score{{target_url="{metrics.get("target_url")}"}} {metrics.get("security_score", 0)}',
-                f'zap_scan_status{{target_url="{metrics.get("target_url")}"}} {1 if metrics.get("scan_completed") else 0}'
-            ])
-            
-            # Enviar para Push Gateway
-            data = '\n'.join(prometheus_metrics)
-            
-            response = requests.post(
-                f"{gateway_url}/metrics/job/zap-security-scan/instance/{target_url}",
-                data=data,
-                headers={'Content-Type': 'text/plain'},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                logger.info(f"Métricas enviadas com sucesso para {gateway_url}")
-                return True
-            else:
-                logger.error(f"Falha ao enviar métricas: {response.status_code} - {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Erro ao enviar métricas para Prometheus: {e}")
-            return False
+# Prometheus integration removed in bare version
     
-    def send_to_influxdb(self, metrics: Dict, influx_config: Dict) -> bool:
-        """Envia métricas para InfluxDB"""
-        try:
-            from influxdb_client import InfluxDBClient, Point
-            from influxdb_client.client.write_api import SYNCHRONOUS
-            
-            client = InfluxDBClient(
-                url=influx_config['url'],
-                token=influx_config['token'],
-                org=influx_config['org']
-            )
-            
-            write_api = client.write_api(write_option=SYNCHRONOUS)
-            
-            # Criar pontos de dados
-            points = []
-            
-            # Ponto principal com todas as métricas
-            point = Point("zap_security_scan") \
-                .tag("target_url", metrics.get('target_url', 'unknown')) \
-                .tag("environment", os.environ.get('ENVIRONMENT', 'unknown')) \
-                .field("total_alerts", metrics.get('total_alerts', 0)) \
-                .field("high_risk", metrics.get('high_risk', 0)) \
-                .field("medium_risk", metrics.get('medium_risk', 0)) \
-                .field("low_risk", metrics.get('low_risk', 0)) \
-                .field("informational", metrics.get('informational', 0)) \
-                .field("security_score", metrics.get('security_score', 0)) \
-                .field("scan_completed", 1 if metrics.get('scan_completed') else 0) \
-                .time(datetime.now(timezone.utc))
-            
-            points.append(point)
-            
-            # Pontos individuais por vulnerabilidade
-            for vuln in metrics.get('vulnerability_details', []):
-                vuln_point = Point("zap_vulnerability") \
-                    .tag("target_url", metrics.get('target_url')) \
-                    .tag("vulnerability_name", vuln['name']) \
-                    .tag("risk_level", vuln['risk']) \
-                    .tag("confidence", vuln['confidence']) \
-                    .field("count", vuln['count']) \
-                    .time(datetime.now(timezone.utc))
-                points.append(vuln_point)
-            
-            # Escrever no InfluxDB
-            write_api.write(bucket=influx_config['bucket'], record=points)
-            
-            logger.info(f"Métricas enviadas com sucesso para InfluxDB")
-            return True
-            
-        except ImportError:
-            logger.error("InfluxDB client não instalado: pip install influxdb-client")
-            return False
-        except Exception as e:
-            logger.error(f"Erro ao enviar métricas para InfluxDB: {e}")
-            return False
+# InfluxDB integration removed in bare version
     
     def generate_summary_report(self, metrics: Dict) -> str:
         """Gera relatório resumido em texto"""
@@ -769,13 +660,9 @@ def main():
     parser.add_argument("--domain", help="Domínio específico para processar (ex: brokencrystals.com)")
     parser.add_argument("--list-domains", action="store_true", help="Listar domínios disponíveis")
     parser.add_argument("--all-domains", action="store_true", help="Processar todos os domínios disponíveis")
-    parser.add_argument("--output-grafana", help="Arquivo de saída para Grafana")
+    parser.add_argument("--output-metrics", help="Arquivo de saída para métricas JSON")
     parser.add_argument("--output-junit", help="Arquivo de saída JUnit XML")
-    parser.add_argument("--prometheus-gateway", help="URL do Prometheus Push Gateway")
-    parser.add_argument("--influxdb-url", help="URL do InfluxDB")
-    parser.add_argument("--influxdb-token", help="Token do InfluxDB")
-    parser.add_argument("--influxdb-org", help="Organização do InfluxDB")
-    parser.add_argument("--influxdb-bucket", help="Bucket do InfluxDB")
+# Prometheus and InfluxDB arguments removed in bare version
     parser.add_argument("--slack-webhook", help="URL do webhook Slack")
     parser.add_argument("--teams-webhook", help="URL do webhook Teams")
     parser.add_argument("--google-workspace-webhook", help="URL do webhook Google Workspace")
@@ -854,48 +741,20 @@ def main():
     
     # Gerar saídas conforme solicitado
     try:
-        # Para múltiplos relatórios, enviar todos para sistemas de monitoramento
+        # Multiple reports processing (simplified for bare version)
         if len(all_metrics) > 1:
-            logger.info("Processando múltiplos relatórios - enviando métricas de todos")
-            
-            # Enviar métricas de todos os relatórios para sistemas de monitoramento
-            for i, metrics in enumerate(all_metrics):
-                # Prometheus Push Gateway
-                if args.prometheus_gateway:
-                    processor.send_to_prometheus_pushgateway(metrics, args.prometheus_gateway)
-                
-                # InfluxDB
-                if all([args.influxdb_url, args.influxdb_token, args.influxdb_org, args.influxdb_bucket]):
-                    influx_config = {
-                        'url': args.influxdb_url,
-                        'token': args.influxdb_token,
-                        'org': args.influxdb_org,
-                        'bucket': args.influxdb_bucket
-                    }
-                    processor.send_to_influxdb(metrics, influx_config)
+            logger.info(f"Processando múltiplos relatórios: {len(all_metrics)} encontrados")
         
         # Usar métricas principais para saídas de arquivo únicas
-        # Grafana JSON
-        if args.output_grafana:
-            processor.export_to_grafana_json(primary_metrics, args.output_grafana)
+        # Metrics JSON
+        if args.output_metrics:
+            processor.export_to_metrics_json(primary_metrics, args.output_metrics)
         
         # JUnit XML
         if args.output_junit:
             processor.export_junit_xml(primary_metrics, args.output_junit)
         
-        # Prometheus Push Gateway (se não foi processado múltiplos)
-        if args.prometheus_gateway and len(all_metrics) == 1:
-            processor.send_to_prometheus_pushgateway(primary_metrics, args.prometheus_gateway)
-        
-        # InfluxDB (se não foi processado múltiplos)
-        if all([args.influxdb_url, args.influxdb_token, args.influxdb_org, args.influxdb_bucket]) and len(all_metrics) == 1:
-            influx_config = {
-                'url': args.influxdb_url,
-                'token': args.influxdb_token,
-                'org': args.influxdb_org,
-                'bucket': args.influxdb_bucket
-            }
-            processor.send_to_influxdb(primary_metrics, influx_config)
+        # External monitoring systems removed in bare version
         
         # Notificações (usando métricas principais)
         if args.slack_webhook:
@@ -953,9 +812,9 @@ def main():
                 logger.info("✅ Todos os quality gates passaram")
         
         # Sempre exportar métricas básicas
-        if not any([args.output_grafana, args.output_junit, args.prometheus_gateway]):
-            # Export padrão para Grafana
-            default_output = processor.export_to_grafana_json(primary_metrics)
+        if not any([args.output_metrics, args.output_junit]):
+            # Export padrão para métricas JSON
+            default_output = processor.export_to_metrics_json(primary_metrics)
             logger.info(f"Métricas exportadas por padrão: {default_output}")
         
         logger.info("Processamento de métricas concluído com sucesso")
@@ -970,13 +829,13 @@ if __name__ == "__main__":
 
 
 # =============================================================================
-# EXEMPLOS DE USO
+# EXEMPLOS DE USO - VERSÃO BARE (SEM GRAFANA/PROMETHEUS/REDIS/DATABASE)
 # =============================================================================
 """
 # Listar domínios disponíveis
 python3 process_zap_metrics.py --list-domains
 
-# Uso básico - processar último relatório e gerar métricas para Grafana
+# Uso básico - processar último relatório e gerar métricas JSON
 python3 process_zap_metrics.py --summary
 
 # Processar relatórios de um domínio específico
@@ -985,18 +844,10 @@ python3 process_zap_metrics.py --domain brokencrystals.com --summary
 # Processar todos os domínios disponíveis
 python3 process_zap_metrics.py --all-domains --summary
 
-# Enviar para Prometheus Push Gateway (domínio específico)
+# Exportar métricas para arquivo JSON (domínio específico)
 python3 process_zap_metrics.py \
     --domain brokencrystals.com \
-    --prometheus-gateway http://prometheus-pushgateway:9091
-
-# Enviar para InfluxDB (todos os domínios)
-python3 process_zap_metrics.py \
-    --all-domains \
-    --influxdb-url http://influxdb:8086 \
-    --influxdb-token your-token-here \
-    --influxdb-org your-org \
-    --influxdb-bucket zap-metrics
+    --output-metrics zap-metrics.json
 
 # Notificações Slack para domínio específico
 python3 process_zap_metrics.py \
@@ -1035,24 +886,20 @@ python3 process_zap_metrics.py \
     --output-junit zap-results.xml \
     --check-gates
 
-# Uso completo - processar domínio específico
+# Uso completo - processar domínio específico (versão bare)
 python3 process_zap_metrics.py \
     --reports-dir ./reports \
     --domain brokencrystals.com \
-    --output-grafana zap-grafana-metrics.json \
+    --output-metrics zap-metrics.json \
     --output-junit zap-junit-results.xml \
-    --prometheus-gateway http://prometheus:9091 \
-    --slack-webhook https://hooks.slack.com/... \
+    --google-workspace-webhook https://chat.googleapis.com/... \
     --check-gates \
     --summary
 
-# Processar todos os domínios e enviar para monitoramento
+# Processar todos os domínios (versão bare)
 python3 process_zap_metrics.py \
     --all-domains \
-    --prometheus-gateway http://prometheus:9091 \
-    --influxdb-url http://influxdb:8086 \
-    --influxdb-token your-token \
-    --influxdb-org your-org \
-    --influxdb-bucket zap-metrics \
+    --output-metrics zap-metrics.json \
+    --google-workspace-webhook https://chat.googleapis.com/... \
     --summary
 """

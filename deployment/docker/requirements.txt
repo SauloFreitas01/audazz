@@ -4,10 +4,10 @@ uvicorn[standard]==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
-# Database
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
-alembic==1.13.1
+# Database dependencies removed in bare version
+# sqlalchemy==2.0.23  # Removed - using file-based storage
+# psycopg2-binary==2.9.9  # Removed - using file-based storage
+# alembic==1.13.1  # Removed - using file-based storage
 
 # Redis dependencies removed in bare version
 # celery==5.3.4  # Task queue removed
@@ -21,9 +21,9 @@ aiohttp==3.9.1
 pyyaml==6.0.1
 python-dotenv==1.0.0
 
-# Async support
+# Async support (simplified for bare version)
 asyncio-mqtt==0.16.1
-asyncpg==0.29.0
+# asyncpg==0.29.0  # Removed - no PostgreSQL support
 
 # Monitoring dependencies removed in bare version
 # prometheus-client==0.19.0  # Removed
