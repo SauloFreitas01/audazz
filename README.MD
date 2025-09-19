@@ -1,488 +1,360 @@
-# 🔒 AUDAZZ - AUTOMATED DAST
+# AutoDast
 
-Framework para automação de testes de segurança usando OWASP ZAP via linha de comando e API, sem necessidade de interface gráfica.
+**AutoDast** is a lightweight yet powerful web application security monitoring tool that automates vulnerability scanning using OWASP ZAP. It provides continuous security monitoring with scheduled scans, comprehensive reporting, and Google Chat integration for real-time notifications.
 
-## 📋 Índice
+## Features
 
-- [Características](#características)
-- [Pré-requisitos](#pré-requisitos)
-- [Instalação](#instalação)
-- [Configuração](#configuração)
-- [Uso Básico](#uso-básico)
-- [Tipos de Varredura](#tipos-de-varredura)
-- [Configurações Avançadas](#configurações-avançadas)
-- [Integração CI/CD](#integração-cicd)
-- [Monitoramento e Relatórios](#monitoramento-e-relatórios)
-- [Troubleshooting](#troubleshooting)
+🔍 **Automated Security Scanning**
+- Integration with OWASP ZAP for comprehensive security testing
+- Optimized scan policies for different scenarios (quick, default, comprehensive)
+- Spider and active scanning with configurable parameters
 
-## ✨ Características
+📊 **Comprehensive Reporting**
+- HTML reports with detailed vulnerability information
+- JSON reports for integration with other tools
+- Risk-based categorization (High, Medium, Low, Informational)
 
-- 🚀 **Automação Completa**: Execução via linha de comando sem interface gráfica
-- 🎯 **Múltiplos Tipos**: Suporte para SPAs, APIs REST, GraphQL, aplicações tradicionais
-- 🔧 **Configurável**: Políticas customizadas para reduzir falsos positivos
-- 📊 **Relatórios**: Múltiplos formatos (JSON, HTML, XML) para integração
-- 🐳 **Containerizado**: Execução via Docker com Selenium Grid para SPAs
-- 🔄 **CI/CD Ready**: Integração fácil com pipelines de deployment
-- 📈 **Métricas**: Processamento para Grafana e sistemas de monitoramento
+⏰ **Scheduled Monitoring**
+- Configurable scan intervals for continuous monitoring
+- Non-blocking manual scans that don't interfere with scheduled scans
+- Target-specific scheduling and policies
 
-## 🛠 Pré-requisitos
+💬 **Google Chat Integration**
+- Real-time notifications with scan results
+- Rich card format with vulnerability breakdown
+- Error notifications and status updates
 
-### Básico
-- Docker 20.10+
-- Docker Compose 2.0+
-- Python 3.8+ (para processamento de relatórios)
+📁 **File-Based Storage**
+- No database dependencies - uses YAML and JSON files
+- Scan history tracking and statistics
+- Target status monitoring and trend analysis
 
-### Para SPAs com Selenium
-- 4GB+ de RAM disponível
-- Rede Docker configurada
+🌐 **Web API Interface**
+- RESTful API for external integrations
+- Web dashboard for monitoring and management
+- Manual scan triggering and status checking
 
-### Para integração CI/CD
-- Jenkins, GitLab CI, GitHub Actions, ou similar
-- Acesso ao registry Docker
+## Quick Start
 
-## 📦 Instalação
+### Prerequisites
 
-### 1. Clone o repositório
+1. **Docker** (recommended): For using ZAP Docker containers
+   - Install Docker Desktop from [docker.com](https://www.docker.com/products/docker-desktop)
+   - OR **OWASP ZAP**: Download and install from [zaproxy.org](https://www.zaproxy.org/) for manual installation
+2. **Python 3.8+**: Required for running AutoDast
+
+### Installation
+
+1. Clone or download AutoDast:
 ```bash
-git clone <repository-url>
-cd owasp-zap-automation
+cd autodast
 ```
 
-### 2. Torne o script executável
+2. Install dependencies:
 ```bash
-chmod +x run_zap_automation.sh
+pip install -r requirements.txt
 ```
 
-### 3. Verificar Docker
+3. Choose your ZAP deployment method:
+
+**Option A: Docker (Recommended)**
 ```bash
-docker --version
-docker-compose --version
+# AutoDast will automatically manage ZAP Docker containers
+# No manual ZAP installation required
 ```
 
-### 4. Pull das imagens necessárias
+**Option B: Manual ZAP Installation**
 ```bash
-docker pull owasp/zap2docker-stable:2.14.0
-docker pull selenium/hub:4.15.0-20231129
-docker pull selenium/node-chrome:4.15.0-20231129
+# Start ZAP in daemon mode (headless)
+zap.sh -daemon -host 0.0.0.0 -port 8080 -config api.addrs.addr.name=* -config api.addrs.addr.regex=true
+
+# Or start ZAP GUI
+zap.sh
 ```
 
-## ⚙️ Configuração
+### Configuration
 
-### Estrutura de Arquivos
-```
-owasp-zap-automation/
-├── zap_automation_plan.yaml          # Configuração principal
-├── zap_spa_automation.yaml           # Configuração para SPAs
-├── zap_policy_config.yaml            # Políticas otimizadas
-├── run_zap_automation.sh             # Script principal
-├── docker-compose.yaml               # Orquestração Docker
-├── examples/
-│   └── zap_application_examples.yaml # Exemplos por tipo de app
-├── reports/                          # Relatórios gerados
-├── config/                           # Configurações extras
-└── grafana/                          # Dashboards Grafana
-```
+Edit `config.yaml` to configure your settings:
 
-### Variáveis de Ambiente
-
-#### Obrigatórias
-```bash
-export TARGET_URL="https://example.com"
-```
-
-#### Opcionais
-```bash
-export ZAP_VERSION="2.14.0"
-export AUTH_USER="testuser"
-export AUTH_PASS="testpass"
-export LOGIN_URL="https://example.com/login"
-export SPA_BASE_URL="https://app.example.com"
-export API_BASE_URL="https://api.example.com"
-export SELENIUM_GRID_URL="http://selenium-hub:4444/wd/hub"
-```
-
-## 🚀 Uso Básico
-
-### Varredura Padrão
-```bash
-TARGET_URL=https://example.com ./run_zap_automation.sh standard
-```
-
-### Varredura SPA (React/Angular/Vue)
-```bash
-TARGET_URL=https://app.example.com ./run_zap_automation.sh spa
-```
-
-### Varredura Rápida (CI/CD)
-```bash
-TARGET_URL=https://staging.example.com ./run_zap_automation.sh quick
-```
-
-### Com Autenticação
-```bash
-TARGET_URL=https://example.com \
-AUTH_USER=testuser \
-AUTH_PASS=testpass \
-LOGIN_URL=https://example.com/login \
-./run_zap_automation.sh standard
-```
-
-## 🎯 Tipos de Varredura
-
-### 1. Standard Scan
-Varredura completa para aplicações web tradicionais.
-
-**Características:**
-- Spider tradicional
-- Passive scan
-- Active scan com políticas otimizadas
-- Relatórios em múltiplos formatos
-
-**Duração:** 20-45 minutos
-
-### 2. SPA Scan
-Otimizada para Single Page Applications.
-
-**Características:**
-- AJAX Spider com Selenium
-- Detecção de DOM XSS
-- Configurações específicas para SPAs
-- Integração com Selenium Grid
-
-**Duração:** 30-60 minutos
-
-### 3. Quick Scan
-Varredura rápida para CI/CD.
-
-**Características:**
-- Baseline scan do ZAP
-- Foco em vulnerabilidades críticas
-- Timeout reduzido
-- Relatório simplificado
-
-**Duração:** 5-15 minutos
-
-### 4. API Scan
-Específica para APIs REST/GraphQL.
-
-**Características:**
-- Import de especificações OpenAPI
-- Testes específicos para APIs
-- Autenticação via Bearer Token
-- Validação de CORS
-
-**Duração:** 15-30 minutos
-
-## 🔧 Configurações Avançadas
-
-### Personalizar Políticas de Varredura
-
-Edite `zap_policy_config.yaml` para:
-
-1. **Desabilitar regras** que geram falsos positivos
-2. **Ajustar thresholds** (LOW, MEDIUM, HIGH)
-3. **Configurar strength** (LOW, MEDIUM, HIGH)
-4. **Definir timeouts** por regra
-
-Exemplo:
+**Docker Mode (Recommended):**
 ```yaml
-disabledRules:
-  - id: "10096"
-    name: "Timestamp Disclosure"
-    reason: "Falsos positivos frequentes"
+zap:
+  host: "localhost"
+  port: 8080
+  api_key: ""
 
-ruleConfigs:
-  - id: "40018" # SQL Injection
-    threshold: "HIGH"
-    strength: "HIGH"
+zap_docker:
+  enabled: true  # Enable Docker mode
+  image: "zaproxy/zap-stable"  # or "zaproxy/zap-weekly" for latest features
+  container_name: "autodast-zap"
+  port: 8080
+  host_port: 8080
+  api_key: ""
+  memory_limit: "2g"
+  auto_remove: true
+  reports_volume: "./reports"
+  session_volume: "./zap-session"
+
+scheduler:
+  interval_hours: 24  # Scan every 24 hours
+
+google_chat:
+  webhook_url: "YOUR_GOOGLE_CHAT_WEBHOOK_URL"  # Optional
+
+targets:
+  - name: "my-web-app"
+    url: "https://myapp.example.com"
+    scan_policy: "default"
+
+  - name: "api-service"
+    url: "https://api.example.com"
+    scan_policy: "quick"
 ```
 
-### Configurar para Diferentes Ambientes
-
-```bash
-# Desenvolvimento - Mais agressivo
-ENVIRONMENT=development ./run_zap_automation.sh standard
-
-# Produção - Mais conservador
-ENVIRONMENT=production ./run_zap_automation.sh quick
-```
-
-### Usar Docker Compose
-
-#### SPA com Selenium Grid
-```bash
-TARGET_URL=https://app.example.com \
-docker-compose --profile zap-with-grid up
-```
-
-#### Com Monitoramento
-```bash
-TARGET_URL=https://example.com \
-docker-compose --profile zap-only --profile monitoring up
-```
-
-## 🔄 Integração CI/CD
-
-### Jenkins Pipeline
-```groovy
-pipeline {
-    agent any
-    
-    environment {
-        TARGET_URL = "${params.TARGET_URL}"
-        ZAP_VERSION = "2.14.0"
-    }
-    
-    stages {
-        stage('Security Scan') {
-            steps {
-                script {
-                    sh '''
-                        chmod +x run_zap_automation.sh
-                        ./run_zap_automation.sh quick
-                    '''
-                }
-            }
-        }
-        
-        stage('Process Results') {
-            steps {
-                script {
-                    // Publicar relatórios
-                    publishHTML([
-                        allowMissing: false,
-                        alwaysLinkToLastBuild: true,
-                        keepAll: true,
-                        reportDir: 'reports',
-                        reportFiles: '*.html',
-                        reportName: 'ZAP Security Report'
-                    ])
-                    
-                    // Processar métricas
-                    sh './run_zap_automation.sh process-reports'
-                }
-            }
-        }
-    }
-    
-    post {
-        always {
-            archiveArtifacts artifacts: 'reports/**/*', fingerprint: true
-        }
-    }
-}
-```
-
-### GitHub Actions
+**Traditional Mode:**
 ```yaml
-name: Security Scan
+zap:
+  host: "localhost"
+  port: 8080
+  api_key: ""  # Set if ZAP API key is required
 
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
+zap_docker:
+  enabled: false  # Disable Docker mode
 
-jobs:
-  security-scan:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Run ZAP Security Scan
-      env:
-        TARGET_URL: ${{ secrets.TARGET_URL }}
-      run: |
-        chmod +x run_zap_automation.sh
-        ./run_zap_automation.sh quick
-    
-    - name: Upload Reports
-      uses: actions/upload-artifact@v3
-      with:
-        name: zap-reports
-        path: reports/
+# ... rest of configuration same as above
 ```
 
-### GitLab CI
-```yaml
-variables:
-  ZAP_VERSION: "2.14.0"
+## Usage
 
-security_scan:
-  stage: test
-  image: docker:latest
-  services:
-    - docker:dind
-  script:
-    - chmod +x run_zap_automation.sh
-    - TARGET_URL=$STAGING_URL ./run_zap_automation.sh quick
-  artifacts:
-    reports:
-      junit: reports/*.xml
-    paths:
-      - reports/
-    expire_in: 1 week
-  only:
-    - merge_requests
-    - main
-```
+### Command Line Interface
 
-## 📊 Monitoramento e Relatórios
-
-### Integração com Grafana
-
-1. **Iniciar stack de monitoramento:**
+**Basic Commands:**
 ```bash
-docker-compose --profile monitoring up -d
+# Run in daemon mode (continuous monitoring)
+python main.py daemon
+
+# Run with web API interface
+python main.py api
+
+# Run manual scan for specific target
+python main.py scan my-web-app
+
+# Run manual scan with specific policy
+python main.py scan my-web-app --policy comprehensive
+
+# Check system status
+python main.py status
+
+# Test Google Chat webhook
+python main.py test-webhook
 ```
 
-2. **Acessar Grafana:** http://localhost:3000
-   - Usuário: admin
-   - Senha: admin123
-
-3. **Processar métricas:**
+**Docker Management Commands:**
 ```bash
-./run_zap_automation.sh process-reports
+# Start ZAP Docker container
+python main.py start-zap
+
+# Stop ZAP Docker container
+python main.py stop-zap
+
+# Restart ZAP Docker container
+python main.py restart-zap
+
+# View ZAP container logs
+python main.py zap-logs
 ```
 
-### Métricas Disponíveis
+### Web Dashboard
 
-- Total de vulnerabilidades por criticidade
-- Tendências de segurança ao longo do tempo
-- Comparação entre ambientes
-- Time to remediation
-- Cobertura de testes
+Access the web dashboard at `http://localhost:8000` when running in API mode:
 
-### Alertas Customizados
+- **System Status**: Monitor AutoDast and ZAP status
+- **Manual Scans**: Trigger scans on-demand
+- **API Documentation**: Interactive API docs at `/docs`
 
-Configure alertas no Grafana para:
-- Vulnerabilidades críticas detectadas
-- Aumento significativo de alertas
-- Falhas no processo de scan
+### API Endpoints
 
-## 🐛 Troubleshooting
+- `GET /status` - Get system and target status
+- `POST /scan` - Execute manual scan
+- `GET /history` - Get scan history
+- `GET /reports` - List available reports
+- `GET /reports/{filename}` - Download specific report
+- `POST /targets` - Add new monitoring target
+- `DELETE /targets/{name}` - Remove target from monitoring
 
-### Problemas Comuns
+## Docker vs Traditional Deployment
 
-#### 1. "Target URL não acessível"
+### Docker Mode Benefits (Recommended)
+
+✅ **Simplified Setup**: No need to manually install and configure OWASP ZAP
+✅ **Consistent Environment**: Same ZAP version across all deployments
+✅ **Automatic Management**: AutoDast handles container lifecycle
+✅ **Isolation**: ZAP runs in isolated container environment
+✅ **Resource Control**: Memory and CPU limits configurable
+✅ **Easy Updates**: Simply change Docker image tag to update ZAP
+✅ **Volume Persistence**: Reports and sessions saved to host filesystem
+
+### Traditional Mode
+
+Use traditional mode when:
+- Docker is not available in your environment
+- You need to use a custom ZAP installation
+- You prefer manual ZAP management
+- You have existing ZAP configurations to maintain
+
+## Scan Policies
+
+AutoDast includes three optimized scan policies:
+
+### Default Policy
+- Balanced approach for regular monitoring
+- Spider: 5 children, depth 5, 10 minutes duration
+- Active scan: 2 threads per host
+
+### Quick Policy
+- Fast scans for frequent monitoring
+- Spider: 3 children, depth 3, 5 minutes duration
+- Active scan: 1 thread per host
+
+### Comprehensive Policy
+- Thorough scans for detailed analysis
+- Spider: 10 children, depth 10, 30 minutes duration
+- Active scan: 4 threads per host
+
+## Google Chat Integration
+
+### Setup
+
+1. Create a Google Chat webhook in your space
+2. Add the webhook URL to your `config.yaml`
+3. Test the integration: `python main.py test-webhook`
+
+### Notification Types
+
+- **Scan Results**: Vulnerability summary with risk breakdown
+- **Error Notifications**: Scan failures and system errors
+- **Status Updates**: System startup and configuration changes
+
+## File Structure
+
+```
+autodast/
+├── config.yaml           # Main configuration
+├── requirements.txt      # Python dependencies
+├── main.py              # CLI entry point
+├── src/
+│   ├── autodast.py      # Main AutoDast class
+│   ├── api.py           # Web API interface
+│   ├── config.py        # Configuration management
+│   ├── zap_client.py    # OWASP ZAP integration
+│   ├── scheduler.py     # Scan scheduling
+│   ├── storage.py       # File-based storage
+│   ├── report_generator.py # Report generation
+│   └── google_chat.py   # Google Chat notifications
+├── templates/
+│   └── report.html      # HTML report template
+├── data/                # Scan data and target status
+│   ├── scans/          # Individual scan results
+│   └── targets/        # Target status files
+└── reports/            # Generated reports (HTML/JSON)
+```
+
+## Data Storage
+
+AutoDast uses file-based storage for simplicity and portability:
+
+- **Scan Results**: Stored as JSON files in `data/scans/`
+- **Target Status**: Stored as YAML files in `data/targets/`
+- **Reports**: Generated in `reports/` directory
+- **Configuration**: Single `config.yaml` file
+
+## Security Considerations
+
+- **ZAP API Access**: Configure ZAP API key if required
+- **Network Security**: Ensure ZAP is properly secured
+- **Webhook URLs**: Keep Google Chat webhook URLs confidential
+- **Report Access**: Secure the reports directory appropriately
+
+## Troubleshooting
+
+### Common Issues
+
+**ZAP Connection Failed (Docker Mode)**
 ```bash
-# Verificar conectividade
-curl -I $TARGET_URL
+# Check Docker status
+docker ps | grep autodast-zap
 
-# Verificar DNS
-nslookup $(echo $TARGET_URL | sed 's|https\?://||' | cut -d'/' -f1)
+# Start ZAP container
+python main.py start-zap
+
+# Check container logs
+python main.py zap-logs
+
+# Restart container if needed
+python main.py restart-zap
 ```
 
-#### 2. "Selenium Grid não responde"
+**ZAP Connection Failed (Traditional Mode)**
 ```bash
-# Verificar status do grid
-docker logs selenium-hub
+# Check if ZAP is running
+curl http://localhost:8080/JSON/core/view/version/
 
-# Restart do grid
-./run_zap_automation.sh cleanup-selenium
-./run_zap_automation.sh setup-selenium
+# Start ZAP in daemon mode
+zap.sh -daemon -host 0.0.0.0 -port 8080
 ```
 
-#### 3. "Memória insuficiente"
+**Docker Issues**
 ```bash
-# Verificar uso de memória
-docker stats
+# Check if Docker is running
+docker version
 
-# Aumentar limites no docker-compose.yaml
-environment:
-  - JAVA_OPTS=-Xmx4g
+# Check Docker permissions (Linux/Mac)
+sudo usermod -aG docker $USER
+
+# Restart Docker service
+sudo systemctl restart docker  # Linux
+# or restart Docker Desktop
 ```
 
-#### 4. "Falha na autenticação"
+**Permission Issues**
 ```bash
-# Testar autenticação manualmente
-curl -X POST $LOGIN_URL \
-  -d "username=$AUTH_USER&password=$AUTH_PASS" \
-  -v
+# Ensure directories are writable
+chmod 755 data reports
 ```
 
-### Debug Mode
-
-Execute com debug habilitado:
+**Import Errors**
 ```bash
-DEBUG=true TARGET_URL=https://example.com ./run_zap_automation.sh standard
+# Install missing dependencies
+pip install -r requirements.txt
 ```
 
-### Logs Detalhados
+### Logs
 
-Verificar logs do container:
-```bash
-docker logs owasp-zap-automation
-```
+AutoDast provides detailed logging. Check console output for:
+- ZAP connection status
+- Scan progress and results
+- Error messages and stack traces
+- Webhook delivery status
 
-### Performance Tuning
+## Contributing
 
-Para ambientes com recursos limitados:
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
-1. **Reduzir paralelismo:**
-```yaml
-parameters:
-  threadPerHost: 1
-  maxDuration: 15
-```
+## License
 
-2. **Limitar regras ativas:**
-```yaml
-disabledRules:
-  - "10096"  # Timestamp
-  - "10094"  # Base64
-  - "10049"  # Content Cacheability
-```
+This project is released under the MIT License. See LICENSE file for details.
 
-3. **Configurar timeouts:**
-```yaml
-performanceOptimization:
-  maxScanTimePerRule: 180
-  maxRequestsPerRule: 50
-```
+## Support
 
-## 📝 Exemplos Práticos
+For issues and questions:
+1. Check the troubleshooting section
+2. Review the logs for error details
+3. Create an issue with relevant details
 
-### E-commerce
-```bash
-TARGET_URL=https://shop.example.com \
-AUTH_USER=customer@example.com \
-AUTH_PASS=password123 \
-./run_zap_automation.sh standard
-```
+---
 
-### API REST
-```bash
-TARGET_URL=https://api.example.com \
-API_TOKEN=bearer_token_here \
-./run_zap_automation.sh standard rest_api_config.yaml
-```
-
-### WordPress
-```bash
-TARGET_URL=https://blog.example.com \
-AUTH_USER=wpuser \
-AUTH_PASS=wppass \
-./run_zap_automation.sh standard wordpress_config.yaml
-```
-
-## 🤝 Contribuindo
-
-1. Fork o projeto
-2. Crie uma branch para sua feature
-3. Commit suas mudanças
-4. Push para a branch
-5. Abra um Pull Request
-
-## 📄 Licença
-
-Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para detalhes.
-
-## 🔗 Links Úteis
-
-- [OWASP ZAP Documentation](https://www.zaproxy.org/docs/)
-- [ZAP Automation Framework](https://www.zaproxy.org/docs/automate/automation-framework/)
-- [OWASP Top 10](https://owasp.org/Top10/)
-- [ZAP Docker Images](https://hub.docker.com/r/owasp/zap2docker-stable)
-- [Selenium Grid Documentation](https://selenium-python.readthedocs.io/)
+**AutoDast** - Simple, powerful, effective web application security monitoring.
