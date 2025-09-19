@@ -1,429 +1,360 @@
-# DAST Monitor - Bare Version
+# AutoDast
 
-> **Note:** This is the **bare version** of the DAST monitoring system without Grafana, Prometheus, Redis dependencies. For the full version with all monitoring integrations, switch to the `main` branch. For detailed bare version documentation, see [README_BARE.md](README_BARE.md).
+**AutoDast** is a lightweight yet powerful web application security monitoring tool that automates vulnerability scanning using OWASP ZAP. It provides continuous security monitoring with scheduled scans, comprehensive reporting, and Google Chat integration for real-time notifications.
 
-A simplified Dynamic Application Security Testing (DAST) monitoring platform focused on core scanning functionality and Google Workspace notifications. This version removes complex monitoring dependencies while maintaining essential security scanning capabilities.
+## Features
 
-## 🚀 Features
+🔍 **Automated Security Scanning**
+- Integration with OWASP ZAP for comprehensive security testing
+- Optimized scan policies for different scenarios (quick, default, comprehensive)
+- Spider and active scanning with configurable parameters
 
-### Core Capabilities
-- **Continuous DAST Scanning** - Automated security scans based on configurable schedules
-- **Multi-Target Management** - Monitor multiple domains and their subdomains simultaneously  
-- **Advanced Subdomain Discovery** - Automated discovery using multiple tools (subfinder, assetfinder, amass)
-- **Flexible Scheduling** - Priority-based scanning with cron-like scheduling
-- **Comprehensive Reporting** - Multiple output formats (JSON, HTML, XML, SARIF)
+📊 **Comprehensive Reporting**
+- HTML reports with detailed vulnerability information
+- JSON reports for integration with other tools
+- Risk-based categorization (High, Medium, Low, Informational)
 
-### Integration & Monitoring
-- **Grafana Dashboards** - Rich visualization and alerting capabilities
-- **SIEM/SOAR Integration** - Support for Splunk, Elasticsearch, Azure Sentinel, IBM QRadar
-- **Prometheus Metrics** - Detailed metrics collection and monitoring
-- **CI/CD Integration** - Quality gates and pipeline integration
-- **Real-time Notifications** - Slack, email, and webhook notifications
+⏰ **Scheduled Monitoring**
+- Configurable scan intervals for continuous monitoring
+- Non-blocking manual scans that don't interfere with scheduled scans
+- Target-specific scheduling and policies
 
-### Enterprise Features
-- **High Availability** - Docker Compose with PostgreSQL and Redis
-- **API Access** - RESTful API with authentication and role-based access
-- **Scalable Architecture** - Containerized with horizontal scaling support
-- **Data Retention** - Configurable report and data retention policies
-- **Security Controls** - API authentication, network restrictions, audit logging
+💬 **Google Chat Integration**
+- Real-time notifications with scan results
+- Rich card format with vulnerability breakdown
+- Error notifications and status updates
 
-## 🏗️ Architecture
+📁 **File-Based Storage**
+- No database dependencies - uses YAML and JSON files
+- Scan history tracking and statistics
+- Target status monitoring and trend analysis
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Web Dashboard │    │   API Gateway   │    │  DAST Monitor   │
-│    (Grafana)    │    │    (Nginx)      │    │   (Python)      │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         ├───────────────────────┼───────────────────────┤
-         │                       │                       │
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Prometheus    │    │   PostgreSQL    │    │     Redis       │
-│   (Metrics)     │    │   (Storage)     │    │   (Queuing)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                                            │
-         │              ┌─────────────────┐           │
-         └──────────────│  OWASP ZAP      │───────────┘
-                        │  (Scanning)     │
-                        └─────────────────┘
-```
+🌐 **Web API Interface**
+- RESTful API for external integrations
+- Web dashboard for monitoring and management
+- Manual scan triggering and status checking
 
-## 🛠️ Installation
+## Quick Start
 
 ### Prerequisites
-- Docker and Docker Compose
-- 4GB+ RAM recommended
-- 50GB+ disk space for reports
-- Network access for subdomain discovery tools
 
-### Quick Start
+1. **Docker** (recommended): For using ZAP Docker containers
+   - Install Docker Desktop from [docker.com](https://www.docker.com/products/docker-desktop)
+   - OR **OWASP ZAP**: Download and install from [zaproxy.org](https://www.zaproxy.org/) for manual installation
+2. **Python 3.8+**: Required for running AutoDast
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd audazz
-   ```
+### Installation
 
-2. **Configure environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env file with your configuration
-   ```
-
-3. **Start the monitoring system**
-   ```bash
-   docker-compose up -d
-   ```
-
-4. **Access the dashboard**
-   - Grafana: http://localhost:3000 (admin/admin-change-me)
-   - API: http://localhost:8080
-   - Metrics: http://localhost:9090
-
-### Environment Configuration
-
-Create a `.env` file with the following variables:
-
+1. Clone or download AutoDast:
 ```bash
-# Database
-POSTGRES_PASSWORD=secure-password-change-me
-REDIS_PASSWORD=redis-password-change-me
-
-# Grafana
-GRAFANA_ADMIN_PASSWORD=admin-change-me
-GRAFANA_API_KEY=your-api-key
-
-# SIEM Integration
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-SIEM_WEBHOOK_URL=https://your-siem-webhook
-
-# API Authentication
-ADMIN_API_TOKEN=admin-token-change-me
-READONLY_API_TOKEN=readonly-token-change-me
-
-# Optional: InfluxDB (if using instead of Prometheus)
-INFLUXDB_ADMIN_PASSWORD=influx-admin-password
-INFLUXDB_ADMIN_TOKEN=influx-token-change-me
+cd autodast
 ```
 
-## ⚙️ Configuration
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-### Main Configuration (dast_config.yaml)
+3. Choose your ZAP deployment method:
 
+**Option A: Docker (Recommended)**
+```bash
+# AutoDast will automatically manage ZAP Docker containers
+# No manual ZAP installation required
+```
+
+**Option B: Manual ZAP Installation**
+```bash
+# Start ZAP in daemon mode (headless)
+zap.sh -daemon -host 0.0.0.0 -port 8080 -config api.addrs.addr.name=* -config api.addrs.addr.regex=true
+
+# Or start ZAP GUI
+zap.sh
+```
+
+### Configuration
+
+Edit `config.yaml` to configure your settings:
+
+**Docker Mode (Recommended):**
 ```yaml
-# Scan scheduling based on priority
-scan_schedules:
-  high_priority: "0 */2 * * *"    # Every 2 hours
-  medium_priority: "0 */6 * * *"  # Every 6 hours  
-  low_priority: "0 0 */1 * *"     # Daily
+zap:
+  host: "localhost"
+  port: 8080
+  api_key: ""
 
-# Grafana integration
-grafana:
-  enabled: true
-  url: "http://localhost:3000"
-  api_key: "${GRAFANA_API_KEY}"
+zap_docker:
+  enabled: true  # Enable Docker mode
+  image: "zaproxy/zap-stable"  # or "zaproxy/zap-weekly" for latest features
+  container_name: "autodast-zap"
+  port: 8080
+  host_port: 8080
+  api_key: ""
+  memory_limit: "2g"
+  auto_remove: true
+  reports_volume: "./reports"
+  session_volume: "./zap-session"
 
-# SIEM integration
-siem:
-  enabled: true
-  type: "webhook"  # webhook, splunk, elasticsearch, sentinel, qradar
-  webhook_url: "${SIEM_WEBHOOK_URL}"
-  severity_threshold: "medium"
+scheduler:
+  interval_hours: 24  # Scan every 24 hours
+
+google_chat:
+  webhook_url: "YOUR_GOOGLE_CHAT_WEBHOOK_URL"  # Optional
+
+targets:
+  - name: "my-web-app"
+    url: "https://myapp.example.com"
+    scan_policy: "default"
+
+  - name: "api-service"
+    url: "https://api.example.com"
+    scan_policy: "quick"
 ```
 
-### Adding Scan Targets
-
-Using the Python API:
-```python
-python dast_monitor.py --add-target example.com --scan-type standard --priority 3
-```
-
-Using the REST API:
-```bash
-curl -X POST "http://localhost:8080/api/v1/targets" \
-  -H "Authorization: Bearer ${ADMIN_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "domain": "example.com",
-    "scan_type": "standard", 
-    "priority": 3
-  }'
-```
-
-## 🔍 Scanning Types
-
-### Standard Web Application Scan
-- **Purpose**: General web application security testing
-- **Features**: Spider crawling, passive + active scanning
-- **Duration**: 30-60 minutes typical
-- **Use Case**: Traditional web applications
-
-### Single Page Application (SPA) Scan  
-- **Purpose**: Modern JavaScript applications
-- **Features**: AJAX spider, Selenium browser automation
-- **Duration**: 45-90 minutes typical
-- **Use Case**: React, Angular, Vue.js applications
-
-### API Service Scan
-- **Purpose**: RESTful API and web service testing
-- **Features**: OpenAPI spec import, API-specific tests
-- **Duration**: 15-45 minutes typical
-- **Use Case**: REST APIs, GraphQL endpoints
-
-## 📊 Monitoring & Dashboards
-
-### Grafana Dashboards
-
-The system includes pre-built Grafana dashboards:
-
-1. **Security Overview**
-   - Total scans and targets
-   - Alert severity distribution
-   - Scan success rates
-   - Recent findings
-
-2. **Vulnerability Trends** 
-   - Historical vulnerability data
-   - Risk trend analysis
-   - Target comparison metrics
-   - Remediation tracking
-
-3. **System Health**
-   - Scan duration monitoring
-   - Error rates and failures
-   - Resource utilization
-   - Queue status
-
-### Prometheus Metrics
-
-Key metrics exposed:
-- `dast_scan_duration_seconds` - Scan execution time
-- `dast_alerts_by_severity` - Alert counts by risk level
-- `dast_scans_total` - Total scan counter
-- `dast_targets_total` - Monitored targets count
-- `dast_subdomains_discovered` - Subdomain discovery metrics
-
-## 🔗 Integrations
-
-### SIEM/SOAR Platforms
-
-Supported integrations:
-- **Splunk** - HEC endpoint integration
-- **Elasticsearch** - Direct indexing with Kibana dashboards  
-- **Azure Sentinel** - Log Analytics workspace integration
-- **IBM QRadar** - API-based event forwarding
-- **Generic Webhook** - Custom SIEM integration
-
-### CI/CD Pipelines
-
-Quality gate integration:
+**Traditional Mode:**
 ```yaml
-# Jenkins Pipeline Example
-pipeline {
-    agent any
-    stages {
-        stage('Security Scan') {
-            steps {
-                script {
-                    def response = httpRequest(
-                        url: "${DAST_MONITOR_URL}/api/v1/scan",
-                        httpMode: 'POST',
-                        authentication: 'dast-api-token',
-                        requestBody: '{"target": "${APP_URL}", "wait": true}'
-                    )
-                    
-                    def result = readJSON text: response.content
-                    if (result.alerts_high > 0) {
-                        error("High severity vulnerabilities found")
-                    }
-                }
-            }
-        }
-    }
-}
+zap:
+  host: "localhost"
+  port: 8080
+  api_key: ""  # Set if ZAP API key is required
+
+zap_docker:
+  enabled: false  # Disable Docker mode
+
+# ... rest of configuration same as above
 ```
 
-### Notification Channels
+## Usage
 
-Supported notification methods:
-- **Slack** - Rich message formatting with alert details
-- **Email** - SMTP integration with HTML reports
-- **Microsoft Teams** - Webhook-based notifications  
-- **Custom Webhooks** - Flexible integration options
+### Command Line Interface
 
-## 🚦 API Reference
-
-### Authentication
-
-All API requests require authentication:
+**Basic Commands:**
 ```bash
-curl -H "Authorization: Bearer ${API_TOKEN}" \
-  "http://localhost:8080/api/v1/status"
+# Run in daemon mode (continuous monitoring)
+python main.py daemon
+
+# Run with web API interface
+python main.py api
+
+# Run manual scan for specific target
+python main.py scan my-web-app
+
+# Run manual scan with specific policy
+python main.py scan my-web-app --policy comprehensive
+
+# Check system status
+python main.py status
+
+# Test Google Chat webhook
+python main.py test-webhook
 ```
 
-### Key Endpoints
-
-| Endpoint | Method | Description |
-|----------|---------|-------------|
-| `/api/v1/targets` | GET | List all targets |
-| `/api/v1/targets` | POST | Add new target |
-| `/api/v1/scan` | POST | Trigger scan |
-| `/api/v1/results/{target}` | GET | Get scan results |
-| `/api/v1/status` | GET | System status |
-| `/health` | GET | Health check |
-| `/metrics` | GET | Prometheus metrics |
-
-### Example API Usage
-
-**Add a target:**
+**Docker Management Commands:**
 ```bash
-curl -X POST "http://localhost:8080/api/v1/targets" \
-  -H "Authorization: Bearer ${ADMIN_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "domain": "example.com",
-    "scan_type": "standard",
-    "priority": 2,
-    "auth_config": {
-      "type": "form",
-      "login_url": "https://example.com/login",
-      "username": "testuser",
-      "password": "testpass"
-    }
-  }'
+# Start ZAP Docker container
+python main.py start-zap
+
+# Stop ZAP Docker container
+python main.py stop-zap
+
+# Restart ZAP Docker container
+python main.py restart-zap
+
+# View ZAP container logs
+python main.py zap-logs
 ```
 
-**Get scan results:**
-```bash
-curl -H "Authorization: Bearer ${READONLY_API_TOKEN}" \
-  "http://localhost:8080/api/v1/results/example.com?limit=10"
+### Web Dashboard
+
+Access the web dashboard at `http://localhost:8000` when running in API mode:
+
+- **System Status**: Monitor AutoDast and ZAP status
+- **Manual Scans**: Trigger scans on-demand
+- **API Documentation**: Interactive API docs at `/docs`
+
+### API Endpoints
+
+- `GET /status` - Get system and target status
+- `POST /scan` - Execute manual scan
+- `GET /history` - Get scan history
+- `GET /reports` - List available reports
+- `GET /reports/{filename}` - Download specific report
+- `POST /targets` - Add new monitoring target
+- `DELETE /targets/{name}` - Remove target from monitoring
+
+## Docker vs Traditional Deployment
+
+### Docker Mode Benefits (Recommended)
+
+✅ **Simplified Setup**: No need to manually install and configure OWASP ZAP
+✅ **Consistent Environment**: Same ZAP version across all deployments
+✅ **Automatic Management**: AutoDast handles container lifecycle
+✅ **Isolation**: ZAP runs in isolated container environment
+✅ **Resource Control**: Memory and CPU limits configurable
+✅ **Easy Updates**: Simply change Docker image tag to update ZAP
+✅ **Volume Persistence**: Reports and sessions saved to host filesystem
+
+### Traditional Mode
+
+Use traditional mode when:
+- Docker is not available in your environment
+- You need to use a custom ZAP installation
+- You prefer manual ZAP management
+- You have existing ZAP configurations to maintain
+
+## Scan Policies
+
+AutoDast includes three optimized scan policies:
+
+### Default Policy
+- Balanced approach for regular monitoring
+- Spider: 5 children, depth 5, 10 minutes duration
+- Active scan: 2 threads per host
+
+### Quick Policy
+- Fast scans for frequent monitoring
+- Spider: 3 children, depth 3, 5 minutes duration
+- Active scan: 1 thread per host
+
+### Comprehensive Policy
+- Thorough scans for detailed analysis
+- Spider: 10 children, depth 10, 30 minutes duration
+- Active scan: 4 threads per host
+
+## Google Chat Integration
+
+### Setup
+
+1. Create a Google Chat webhook in your space
+2. Add the webhook URL to your `config.yaml`
+3. Test the integration: `python main.py test-webhook`
+
+### Notification Types
+
+- **Scan Results**: Vulnerability summary with risk breakdown
+- **Error Notifications**: Scan failures and system errors
+- **Status Updates**: System startup and configuration changes
+
+## File Structure
+
+```
+autodast/
+├── config.yaml           # Main configuration
+├── requirements.txt      # Python dependencies
+├── main.py              # CLI entry point
+├── src/
+│   ├── autodast.py      # Main AutoDast class
+│   ├── api.py           # Web API interface
+│   ├── config.py        # Configuration management
+│   ├── zap_client.py    # OWASP ZAP integration
+│   ├── scheduler.py     # Scan scheduling
+│   ├── storage.py       # File-based storage
+│   ├── report_generator.py # Report generation
+│   └── google_chat.py   # Google Chat notifications
+├── templates/
+│   └── report.html      # HTML report template
+├── data/                # Scan data and target status
+│   ├── scans/          # Individual scan results
+│   └── targets/        # Target status files
+└── reports/            # Generated reports (HTML/JSON)
 ```
 
-## 🐳 Docker Deployment
+## Data Storage
 
-### Production Deployment
+AutoDast uses file-based storage for simplicity and portability:
 
-1. **Configure production environment**
-   ```bash
-   # Use production compose file
-   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-   ```
+- **Scan Results**: Stored as JSON files in `data/scans/`
+- **Target Status**: Stored as YAML files in `data/targets/`
+- **Reports**: Generated in `reports/` directory
+- **Configuration**: Single `config.yaml` file
 
-2. **Enable SSL/TLS**
-   ```bash
-   # Copy SSL certificates to nginx/ssl/
-   # Update nginx configuration for HTTPS
-   ```
+## Security Considerations
 
-3. **Scale services**
-   ```bash
-   docker-compose up -d --scale dast-monitor=3
-   ```
+- **ZAP API Access**: Configure ZAP API key if required
+- **Network Security**: Ensure ZAP is properly secured
+- **Webhook URLs**: Keep Google Chat webhook URLs confidential
+- **Report Access**: Secure the reports directory appropriately
 
-### Service Profiles
-
-Different deployment profiles available:
-- **Default**: Core monitoring services
-- **Production**: With nginx reverse proxy and SSL
-- **InfluxDB**: Use InfluxDB instead of Prometheus  
-- **Elastic**: Include Elasticsearch and Kibana
-- **Discovery**: Enhanced subdomain discovery services
-
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
-**Scans failing with permission errors:**
+**ZAP Connection Failed (Docker Mode)**
 ```bash
-# Ensure Docker socket permissions
+# Check Docker status
+docker ps | grep autodast-zap
+
+# Start ZAP container
+python main.py start-zap
+
+# Check container logs
+python main.py zap-logs
+
+# Restart container if needed
+python main.py restart-zap
+```
+
+**ZAP Connection Failed (Traditional Mode)**
+```bash
+# Check if ZAP is running
+curl http://localhost:8080/JSON/core/view/version/
+
+# Start ZAP in daemon mode
+zap.sh -daemon -host 0.0.0.0 -port 8080
+```
+
+**Docker Issues**
+```bash
+# Check if Docker is running
+docker version
+
+# Check Docker permissions (Linux/Mac)
 sudo usermod -aG docker $USER
-# Or run with elevated privileges
+
+# Restart Docker service
+sudo systemctl restart docker  # Linux
+# or restart Docker Desktop
 ```
 
-**High memory usage:**
-```yaml
-# Limit ZAP memory in dast_config.yaml
-zap:
-  memory: "2g"
-  timeout: 1800
-```
-
-**Subdomain discovery not working:**
+**Permission Issues**
 ```bash
-# Install discovery tools
-sudo apt install subfinder assetfinder
-# Or use Docker-based tools
+# Ensure directories are writable
+chmod 755 data reports
 ```
 
-### Log Analysis
-
+**Import Errors**
 ```bash
-# Monitor main application logs
-docker-compose logs -f dast-monitor
-
-# Check scan execution logs  
-docker-compose logs dast-monitor | grep "scan_id"
-
-# Database connection issues
-docker-compose logs postgres
+# Install missing dependencies
+pip install -r requirements.txt
 ```
 
-### Performance Tuning
+### Logs
 
-**Concurrent scans:**
-```yaml
-max_concurrent_scans: 5  # Adjust based on resources
-```
+AutoDast provides detailed logging. Check console output for:
+- ZAP connection status
+- Scan progress and results
+- Error messages and stack traces
+- Webhook delivery status
 
-**Scan optimization:**
-```yaml
-performance:
-  scan_optimization:
-    max_crawl_depth: 3     # Reduce for faster scans
-    request_delay: 50      # Increase for rate limiting
-```
+## Contributing
 
-## 🔒 Security Considerations
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
-### Network Security
-- Use firewalls to restrict access to monitoring ports
-- Enable TLS for all external communications
-- Consider VPN access for management interfaces
+## License
 
-### Data Protection  
-- Encrypt sensitive configuration data
-- Regular backup of scan results and configurations
-- Implement data retention policies
+This project is released under the MIT License. See LICENSE file for details.
 
-### Access Control
-- Use strong API tokens and rotate regularly
-- Implement role-based access control
-- Monitor API usage and authentication failures
+## Support
 
-## 🚀 Getting Started
-
-1. **Set up your targets**
-   ```bash
-   python dast_monitor.py --add-target yourapp.com --scan-type standard --priority 3
-   ```
-
-2. **Monitor the dashboard**
-   - Open Grafana at http://localhost:3000
-   - View the "DAST Security Monitoring" dashboard
-   - Set up alerts for high-severity findings
-
-3. **Configure integrations**
-   - Set up SIEM forwarding in `dast_config.yaml`
-   - Configure Slack notifications
-   - Enable CI/CD quality gates
-
-## 📞 Support
-
-For questions, issues, or contributions:
-- Create an issue in the repository
-- Check the troubleshooting section
-- Review the configuration examples
+For issues and questions:
+1. Check the troubleshooting section
+2. Review the logs for error details
+3. Create an issue with relevant details
 
 ---
 
-**Transform your security scanning from reactive to proactive with continuous DAST monitoring!** 🛡️
+**AutoDast** - Simple, powerful, effective web application security monitoring.

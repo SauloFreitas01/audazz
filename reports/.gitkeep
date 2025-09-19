@@ -1,2 +1,0 @@
-# This file ensures the reports directory is tracked in git while ignoring report contents
-# Organized reports are generated here by domain/subdomain/file-type structure
