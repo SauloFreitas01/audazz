@@ -1,0 +1,57 @@
+google_chat:
+  webhook_url: ''
+reports:
+  formats:
+  - html
+  - json
+  output_dir: reports
+scan_policies:
+  comprehensive:
+    ascan_delay_in_ms: 0
+    ascan_policy: Default Policy
+    ascan_threads_per_host: 4
+    spider_max_children: 10
+    spider_max_depth: 10
+    spider_max_duration: 30
+  default:
+    ascan_delay_in_ms: 0
+    ascan_policy: Default Policy
+    ascan_threads_per_host: 2
+    spider_max_children: 5
+    spider_max_depth: 5
+    spider_max_duration: 10
+  quick:
+    ascan_delay_in_ms: 0
+    ascan_policy: Light
+    ascan_threads_per_host: 1
+    spider_max_children: 3
+    spider_max_depth: 3
+    spider_max_duration: 5
+scheduler:
+  interval_hours: 24
+targets:
+- name: brokencrystals.com
+  scan_policy: default
+  url: http://brokencrystals.com
+- name: example.com
+  scan_policy: default
+  url: https://example.com
+- name: httpbin.org
+  scan_policy: default
+  url: https://httpbin.org
+zap:
+  api_key: ''
+  host: localhost
+  port: 8080
+zap_docker:
+  api_key: ''
+  auto_remove: true
+  command: null
+  container_name: autodast-zap
+  enabled: true
+  host_port: 8080
+  image: zaproxy/zap-stable
+  memory_limit: 2g
+  port: 8080
+  reports_volume: ./reports
+  session_volume: ./zap-session
