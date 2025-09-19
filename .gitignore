@@ -38,8 +38,7 @@ data/
 reports/
 *.log
 
-# Configuration (may contain sensitive data)
-config.yaml
+
 
 # OS
 .DS_Store
