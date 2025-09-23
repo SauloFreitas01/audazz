@@ -4,6 +4,7 @@ from typing import Dict, Any
 from datetime import datetime
 from jinja2 import Environment, FileSystemLoader
 import logging
+from urllib.parse import urlparse
 
 
 logger = logging.getLogger(__name__)
@@ -20,16 +21,69 @@ class ReportGenerator:
         """Create output directory if it doesn't exist."""
         os.makedirs(self.output_dir, exist_ok=True)
 
+    def _parse_domain_subdomain(self, target_name: str) -> tuple[str, str]:
+        """Parse target name to extract domain and subdomain."""
+        try:
+            # Handle URLs with protocol
+            if target_name.startswith(('http://', 'https://')):
+                parsed = urlparse(target_name)
+                hostname = parsed.hostname or target_name
+            else:
+                # Handle direct domain names
+                hostname = target_name.split('/')[0]  # Remove any path components
+
+            # Split hostname into parts
+            parts = hostname.split('.')
+
+            if len(parts) < 2:
+                # Invalid domain format, use as is
+                return hostname, ""
+
+            # Extract domain (last two parts for most cases, e.g., example.com)
+            # Handle special cases like co.uk, com.br, etc.
+            if len(parts) >= 3 and parts[-2] in ['co', 'com', 'org', 'net', 'gov', 'edu']:
+                domain = '.'.join(parts[-3:])
+                subdomain = '.'.join(parts[:-3]) if len(parts) > 3 else ""
+            else:
+                domain = '.'.join(parts[-2:])
+                subdomain = '.'.join(parts[:-2]) if len(parts) > 2 else ""
+
+            return domain, subdomain
+
+        except Exception as e:
+            logger.warning(f"Failed to parse domain from {target_name}: {e}")
+            # Fallback: use target_name as domain
+            return target_name, ""
+
+    def _get_organized_output_path(self, target_name: str) -> str:
+        """Get organized output path based on domain/subdomain structure."""
+        domain, subdomain = self._parse_domain_subdomain(target_name)
+
+        if subdomain:
+            # Structure: reports/domain/subdomain/
+            organized_path = os.path.join(self.output_dir, domain, subdomain)
+        else:
+            # Structure: reports/domain/
+            organized_path = os.path.join(self.output_dir, domain)
+
+        # Create directory if it doesn't exist
+        os.makedirs(organized_path, exist_ok=True)
+
+        return organized_path
+
     def generate_html_report(self, scan_result: Dict[str, Any], target_name: str) -> str:
         """Generate HTML report from scan results."""
         try:
             template = self.jinja_env.get_template('report.html')
             html_content = template.render(report=scan_result)
 
+            # Get organized output path
+            organized_path = self._get_organized_output_path(target_name)
+
             # Create filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{target_name}_{timestamp}.html"
-            filepath = os.path.join(self.output_dir, filename)
+            filepath = os.path.join(organized_path, filename)
 
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(html_content)
@@ -44,10 +98,13 @@ class ReportGenerator:
     def generate_json_report(self, scan_result: Dict[str, Any], target_name: str) -> str:
         """Generate JSON report from scan results."""
         try:
+            # Get organized output path
+            organized_path = self._get_organized_output_path(target_name)
+
             # Create filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{target_name}_{timestamp}.json"
-            filepath = os.path.join(self.output_dir, filename)
+            filepath = os.path.join(organized_path, filename)
 
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(scan_result, f, indent=2, ensure_ascii=False)
@@ -149,16 +206,23 @@ class ReportGenerator:
             return []
 
         files = []
-        for filename in os.listdir(self.output_dir):
-            if target_name is None or filename.startswith(f"{target_name}_"):
-                filepath = os.path.join(self.output_dir, filename)
-                file_info = {
-                    "filename": filename,
-                    "filepath": filepath,
-                    "size": os.path.getsize(filepath),
-                    "modified": datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
-                }
-                files.append(file_info)
+
+        # Walk through the directory structure to find all report files
+        for root, dirs, filenames in os.walk(self.output_dir):
+            for filename in filenames:
+                # Filter by target_name if specified
+                if target_name is None or filename.startswith(f"{target_name}_"):
+                    filepath = os.path.join(root, filename)
+                    # Get relative path from reports directory for better display
+                    rel_path = os.path.relpath(filepath, self.output_dir)
+                    file_info = {
+                        "filename": filename,
+                        "filepath": filepath,
+                        "relative_path": rel_path,
+                        "size": os.path.getsize(filepath),
+                        "modified": datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+                    }
+                    files.append(file_info)
 
         # Sort by modification time (newest first)
         files.sort(key=lambda x: x['modified'], reverse=True)

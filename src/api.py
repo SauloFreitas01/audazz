@@ -230,18 +230,33 @@ async def get_reports(target_name: Optional[str] = None):
     }
 
 
-@app.get("/reports/{filename}")
+@app.get("/reports/{filename:path}")
 async def download_report(filename: str):
     """Download a specific report file."""
     if not autodast:
         raise HTTPException(status_code=503, detail="AutoDast not initialized")
 
+    # Security check: prevent directory traversal attacks
+    if ".." in filename or filename.startswith("/") or filename.startswith("\\"):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    # Support both old flat structure and new nested structure
     filepath = os.path.join(autodast.config.reports.output_dir, filename)
 
-    if not os.path.exists(filepath):
+    # Normalize path to prevent directory traversal
+    normalized_path = os.path.normpath(filepath)
+    reports_dir = os.path.normpath(autodast.config.reports.output_dir)
+
+    # Ensure the file is within the reports directory
+    if not normalized_path.startswith(reports_dir):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if not os.path.exists(normalized_path):
         raise HTTPException(status_code=404, detail="Report not found")
 
-    return FileResponse(filepath, filename=filename)
+    # Extract just the filename for download
+    download_filename = os.path.basename(filename)
+    return FileResponse(normalized_path, filename=download_filename)
 
 
 @app.post("/targets")

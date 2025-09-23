@@ -1,0 +1,858 @@
+name: Integrated Monthly Security Scan
+
+on:
+  schedule:
+    # Run on the 1st day of every month at 2:00 AM UTC
+    - cron: '0 2 1 * *'
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: 'Type of scan to perform'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - new-only
+          - specific-domain
+      specific_domain:
+        description: 'Specific domain to scan (if scan_type is specific-domain)'
+        required: false
+        type: string
+      scan_policy:
+        description: 'Scan policy to use'
+        required: false
+        default: 'comprehensive'
+        type: choice
+        options:
+          - comprehensive
+          - quick
+          - baseline
+
+env:
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  discover-targets:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+      targets-summary: ${{ steps.generate-matrix.outputs.summary }}
+      has-targets: ${{ steps.generate-matrix.outputs.has-targets }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        working-directory: ./autoDAST
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download previous targets (for new detection)
+        uses: actions/download-artifact@v3
+        continue-on-error: true
+        with:
+          name: previous-targets
+          path: ./previous/
+
+      - name: Discover and organize targets
+        id: generate-matrix
+        working-directory: ./autoDAST
+        run: |
+          # Create targets directory if it doesn't exist
+          mkdir -p ../targets/subdomains
+
+          # Check if we have any targets configured
+          if [ ! -f "../targets/domains.txt" ] || [ ! -s "../targets/domains.txt" ] || ! grep -v '^#' "../targets/domains.txt" | grep -q .; then
+            echo "No domains configured in targets/domains.txt"
+            echo "has-targets=false" >> $GITHUB_OUTPUT
+            echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+            echo "summary={\"total_targets\":0}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Run target discovery and matrix generation
+          python src/target_manager.py --targets-dir ../targets --action matrix --max-per-job 20 > matrix.json
+
+          # Generate summary
+          python src/target_manager.py --targets-dir ../targets --action summary > summary.json
+
+          # Check for new targets if previous scan exists
+          if [ -f "../previous/targets.json" ]; then
+            echo "Detecting new targets since last scan..."
+            python src/target_manager.py --targets-dir ../targets --action detect-new --previous-targets ../previous/targets.json > new-targets.json
+
+            if [ "${{ github.event.inputs.scan_type }}" = "new-only" ]; then
+              echo "Scan type is new-only, filtering matrix..."
+              # Create matrix with only new targets
+              python -c "
+          import json
+          import sys
+
+          try:
+              with open('new-targets.json', 'r') as f:
+                  new_targets = json.load(f)
+
+              if not new_targets:
+                  print('No new targets found')
+                  matrix = {'include': []}
+              else:
+                  # Flatten new targets
+                  all_new = []
+                  for domain, targets in new_targets.items():
+                      all_new.extend(targets)
+
+                  if all_new:
+                      matrix = {'include': [{'job_name': 'scan-new-targets', 'targets': ','.join(all_new)}]}
+                  else:
+                      matrix = {'include': []}
+
+              print(json.dumps(matrix))
+          except Exception as e:
+              print(f'Error processing new targets: {e}', file=sys.stderr)
+              matrix = {'include': []}
+              print(json.dumps(matrix))
+              " > matrix.json
+            fi
+          fi
+
+          # Handle specific domain scanning
+          if [ "${{ github.event.inputs.scan_type }}" = "specific-domain" ] && [ -n "${{ github.event.inputs.specific_domain }}" ]; then
+            echo "Filtering for specific domain: ${{ github.event.inputs.specific_domain }}"
+            python -c "
+          import json
+
+          domain = '${{ github.event.inputs.specific_domain }}'
+
+          # Get targets for specific domain
+          import sys
+          sys.path.append('src')
+          from target_manager import TargetManager
+
+          manager = TargetManager('../targets')
+          all_targets = manager.get_all_targets()
+
+          if domain in all_targets:
+              targets = all_targets[domain]
+              matrix = {'include': [{'job_name': f'scan-{domain}', 'targets': ','.join(targets)}]}
+          else:
+              matrix = {'include': []}
+
+          print(json.dumps(matrix))
+          " > matrix.json
+          fi
+
+          # Read and validate matrix
+          if [ -f "matrix.json" ]; then
+            MATRIX_CONTENT=$(cat matrix.json)
+            echo "Generated matrix: $MATRIX_CONTENT"
+
+            # Check if matrix has any jobs
+            if echo "$MATRIX_CONTENT" | jq -e '.include | length > 0' > /dev/null; then
+              echo "has-targets=true" >> $GITHUB_OUTPUT
+            else
+              echo "has-targets=false" >> $GITHUB_OUTPUT
+            fi
+
+            echo "matrix=$MATRIX_CONTENT" >> $GITHUB_OUTPUT
+          else
+            echo "has-targets=false" >> $GITHUB_OUTPUT
+            echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+          fi
+
+          # Read summary
+          if [ -f "summary.json" ]; then
+            SUMMARY_CONTENT=$(cat summary.json)
+            echo "summary=$SUMMARY_CONTENT" >> $GITHUB_OUTPUT
+          else
+            echo "summary={\"total_targets\":0}" >> $GITHUB_OUTPUT
+          fi
+
+          # Save current targets for next run
+          python src/target_manager.py --targets-dir ../targets --save-current current-targets.json
+
+      - name: Upload current targets for next run
+        uses: actions/upload-artifact@v3
+        with:
+          name: previous-targets
+          path: autoDAST/current-targets.json
+          retention-days: 90
+
+      - name: Display discovered targets
+        run: |
+          echo "### Target Discovery Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Targets Found:** ${{ fromJson(steps.generate-matrix.outputs.summary).total_targets }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Main Domains:** ${{ fromJson(steps.generate-matrix.outputs.summary).main_domains }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Scan Jobs:** ${{ fromJson(steps.generate-matrix.outputs.matrix).include | length }}" >> $GITHUB_STEP_SUMMARY
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: discover-targets
+    if: needs.discover-targets.outputs.has-targets == 'true'
+    timeout-minutes: 480  # 8 hours timeout
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-targets.outputs.matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        working-directory: ./autoDAST
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Docker
+        run: |
+          docker --version
+          docker-compose --version
+
+      - name: Create reports directory
+        run: |
+          mkdir -p autoDAST/reports
+          mkdir -p autoDAST/executive-reports
+
+      - name: Configure AutoDast
+        working-directory: ./autoDAST
+        run: |
+          # Create a minimal config for CI
+          cat > config.json << EOF
+          {
+            "zap": {
+              "mode": "docker",
+              "docker_image": "zaproxy/zap-stable:latest",
+              "timeout": 300
+            },
+            "targets": {},
+            "webhook": {
+              "enabled": false
+            },
+            "scheduler": {
+              "enabled": false
+            }
+          }
+          EOF
+
+      - name: Run security scans for batch
+        id: scan-batch
+        working-directory: ./autoDAST
+        run: |
+          POLICY="${{ github.event.inputs.scan_policy || 'comprehensive' }}"
+          TARGETS="${{ matrix.targets }}"
+
+          echo "Running scans for targets: $TARGETS with policy: $POLICY"
+
+          # Convert comma-separated targets to array
+          IFS=',' read -ra TARGET_ARRAY <<< "$TARGETS"
+
+          SUCCESSFUL_SCANS=0
+          FAILED_SCANS=0
+          BATCH_SUMMARIES=()
+
+          for TARGET in "${TARGET_ARRAY[@]}"; do
+            TARGET=$(echo "$TARGET" | xargs)  # Trim whitespace
+            echo "Scanning target: $TARGET"
+
+            # Run the scan and capture output
+            if python main.py scan "$TARGET" --policy "$POLICY" > "scan_${TARGET//[^a-zA-Z0-9]/_}.log" 2>&1; then
+              echo "✅ Scan completed successfully for $TARGET"
+              SUCCESSFUL_SCANS=$((SUCCESSFUL_SCANS + 1))
+
+              # Find the latest report for this target
+              LATEST_REPORT=$(find reports -name "*${TARGET//[^a-zA-Z0-9]/_}*.json" -type f -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2- || echo "")
+
+              if [ -n "$LATEST_REPORT" ] && [ -f "$LATEST_REPORT" ]; then
+                # Extract summary from report
+                HIGH_VULNS=$(jq -r '.summary.High // 0' "$LATEST_REPORT")
+                MEDIUM_VULNS=$(jq -r '.summary.Medium // 0' "$LATEST_REPORT")
+                LOW_VULNS=$(jq -r '.summary.Low // 0' "$LATEST_REPORT")
+                TOTAL=$((HIGH_VULNS + MEDIUM_VULNS + LOW_VULNS))
+
+                BATCH_SUMMARIES+=("{\"target\":\"$TARGET\",\"high\":$HIGH_VULNS,\"medium\":$MEDIUM_VULNS,\"low\":$LOW_VULNS,\"total\":$TOTAL}")
+              fi
+            else
+              echo "❌ Scan failed for $TARGET"
+              FAILED_SCANS=$((FAILED_SCANS + 1))
+              cat "scan_${TARGET//[^a-zA-Z0-9]/_}.log"
+            fi
+          done
+
+          echo "successful_scans=$SUCCESSFUL_SCANS" >> $GITHUB_OUTPUT
+          echo "failed_scans=$FAILED_SCANS" >> $GITHUB_OUTPUT
+          echo "total_targets=${#TARGET_ARRAY[@]}" >> $GITHUB_OUTPUT
+
+          # Create batch summary
+          printf "[%s]" "$(IFS=","; echo "${BATCH_SUMMARIES[*]}")" > batch_summary.json
+          echo "batch_summary=$(cat batch_summary.json)" >> $GITHUB_OUTPUT
+
+      - name: Upload scan artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: scan-results-${{ matrix.job_name }}
+          path: |
+            autoDAST/reports/**/*
+            autoDAST/scan_*.log
+            autoDAST/batch_summary.json
+          retention-days: 90
+
+  generate-executive-report:
+    runs-on: ubuntu-latest
+    needs: [discover-targets, security-scan]
+    if: always() && needs.discover-targets.outputs.has-targets == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: ./autoDAST
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download all scan artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts/
+
+      - name: Generate executive report
+        id: exec_report
+        working-directory: ./autoDAST
+        run: |
+          # Copy all scan results to reports directory
+          mkdir -p reports executive-reports
+
+          # Find and copy all JSON reports
+          find ../artifacts -name "*.json" -path "*/scan-results-*/*" -exec cp {} reports/ \; 2>/dev/null || true
+
+          # Collect batch summaries
+          mkdir -p batch-summaries
+          find ../artifacts -name "batch_summary.json" -exec cp {} batch-summaries/ \; 2>/dev/null || true
+
+          # Generate comprehensive executive summary with subdomain integration
+          python -c "
+          import json
+          import os
+          import glob
+          from datetime import datetime
+          import sys
+          sys.path.append('src')
+          from target_manager import TargetManager
+
+          # Get target information
+          manager = TargetManager('../targets')
+          targets_summary = manager.get_targets_summary()
+
+          # Collect all batch summaries
+          batch_results = []
+          for summary_file in glob.glob('batch-summaries/batch_summary.json'):
+              try:
+                  with open(summary_file, 'r') as f:
+                      batch_data = json.load(f)
+                      if isinstance(batch_data, list):
+                          batch_results.extend(batch_data)
+              except Exception as e:
+                  print(f'Error reading batch summary: {e}')
+
+          # Calculate overall statistics
+          total_scanned = len(batch_results)
+          total_critical = sum(r.get('high', 0) for r in batch_results)
+          total_medium = sum(r.get('medium', 0) for r in batch_results)
+          total_low = sum(r.get('low', 0) for r in batch_results)
+          total_vulns = total_critical + total_medium + total_low
+
+          # Determine overall risk level
+          if total_critical > 0:
+              overall_risk = 'Critical'
+              risk_emoji = '🔴'
+          elif total_medium > 0:
+              overall_risk = 'Medium'
+              risk_emoji = '🟡'
+          elif total_vulns > 0:
+              overall_risk = 'Low'
+              risk_emoji = '🟢'
+          else:
+              overall_risk = 'Clean'
+              risk_emoji = '✅'
+
+          # Organize results by domain
+          domain_results = {}
+          for result in batch_results:
+              target = result['target']
+              # Find which domain this target belongs to
+              found_domain = None
+              for domain, domain_targets in targets_summary.get('domains', {}).items():
+                  if target in domain_targets.get('targets', []):
+                      found_domain = domain
+                      break
+
+              if not found_domain:
+                  # Try to extract domain from target
+                  parts = target.split('.')
+                  if len(parts) >= 2:
+                      found_domain = '.'.join(parts[-2:])
+                  else:
+                      found_domain = 'unknown'
+
+              if found_domain not in domain_results:
+                  domain_results[found_domain] = {
+                      'targets': [],
+                      'total_critical': 0,
+                      'total_medium': 0,
+                      'total_low': 0,
+                      'total_vulns': 0
+                  }
+
+              domain_results[found_domain]['targets'].append(result)
+              domain_results[found_domain]['total_critical'] += result.get('high', 0)
+              domain_results[found_domain]['total_medium'] += result.get('medium', 0)
+              domain_results[found_domain]['total_low'] += result.get('low', 0)
+              domain_results[found_domain]['total_vulns'] += result.get('total', 0)
+
+          # Generate executive summary
+          summary = {
+              'scan_date': datetime.now().isoformat(),
+              'scan_month': datetime.now().strftime('%B %Y'),
+              'scan_type': '${{ github.event.inputs.scan_type || \"scheduled\" }}',
+              'overall_risk': overall_risk,
+              'risk_emoji': risk_emoji,
+              'targets_configured': targets_summary.get('total_targets', 0),
+              'targets_scanned': total_scanned,
+              'main_domains': targets_summary.get('main_domains', 0),
+              'vulnerabilities': {
+                  'critical': total_critical,
+                  'medium': total_medium,
+                  'low': total_low,
+                  'total': total_vulns
+              },
+              'domain_breakdown': domain_results,
+              'subdomain_integration': {
+                  'enabled': True,
+                  'domains_file': '../targets/domains.txt',
+                  'subdomains_dir': '../targets/subdomains'
+              },
+              'scan_results': batch_results
+          }
+
+          # Save executive summary
+          with open('executive-reports/executive_summary.json', 'w') as f:
+              json.dump(summary, f, indent=2)
+
+          # Generate markdown summary for Google Chat
+          md_content = f'''# Monthly Security Scan Executive Summary
+
+          **Scan Date:** {datetime.now().strftime('%B %Y')}
+          **Scan Type:** {summary['scan_type'].title()}
+          **Overall Risk Level:** {risk_emoji} {overall_risk}
+
+          ## Scan Coverage
+          - **Main Domains:** {summary['main_domains']}
+          - **Total Targets Configured:** {summary['targets_configured']}
+          - **Targets Scanned:** {summary['targets_scanned']}
+
+          ## Vulnerability Summary
+          - **Total Vulnerabilities:** {total_vulns}
+          - **Critical:** {total_critical}
+          - **Medium:** {total_medium}
+          - **Low:** {total_low}
+
+          ## Domain Breakdown
+          '''
+
+          for domain, data in domain_results.items():
+              targets_count = len(data['targets'])
+              risk_level = '🔴' if data['total_critical'] > 0 else '🟡' if data['total_medium'] > 0 else '🟢' if data['total_vulns'] > 0 else '✅'
+
+              md_content += f'''
+          ### {domain} {risk_level}
+          - **Targets Scanned:** {targets_count}
+          - **Vulnerabilities:** Critical({data['total_critical']}), Medium({data['total_medium']}), Low({data['total_low']})
+          '''
+
+          md_content += f'''
+
+          ## Integration Status
+          - **Subdomain Discovery:** ✅ Integrated
+          - **Dynamic Target Discovery:** ✅ Active
+          - **Automated Scanning:** ✅ Configured
+
+          ## Recommendations
+          {'🚨 **Immediate Action Required** - Critical vulnerabilities detected across subdomains' if total_critical > 0 else ''}
+          {'⚠️ **Review Required** - Medium risk vulnerabilities found in subdomain infrastructure' if total_medium > 0 and total_critical == 0 else ''}
+          {'✅ **Good Security Posture** - No critical or medium vulnerabilities detected' if total_critical == 0 and total_medium == 0 else ''}
+
+          📊 **Detailed reports available in GitHub Actions artifacts**
+          '''
+
+          with open('executive-reports/summary.md', 'w') as f:
+              f.write(md_content)
+
+          # Set outputs for next steps
+          print(f'targets_configured={summary[\"targets_configured\"]}')
+          print(f'targets_scanned={summary[\"targets_scanned\"]}')
+          print(f'total_vulns={total_vulns}')
+          print(f'critical_vulns={total_critical}')
+          print(f'medium_vulns={total_medium}')
+          print(f'overall_risk={overall_risk}')
+          print(f'risk_emoji={risk_emoji}')
+          print(f'main_domains={summary[\"main_domains\"]}')
+          "
+
+          # Extract values for GitHub outputs
+          EXEC_SUMMARY=$(cat executive-reports/executive_summary.json)
+          echo "targets_configured=$(echo $EXEC_SUMMARY | jq -r '.targets_configured')" >> $GITHUB_OUTPUT
+          echo "targets_scanned=$(echo $EXEC_SUMMARY | jq -r '.targets_scanned')" >> $GITHUB_OUTPUT
+          echo "total_vulns=$(echo $EXEC_SUMMARY | jq -r '.vulnerabilities.total')" >> $GITHUB_OUTPUT
+          echo "critical_vulns=$(echo $EXEC_SUMMARY | jq -r '.vulnerabilities.critical')" >> $GITHUB_OUTPUT
+          echo "medium_vulns=$(echo $EXEC_SUMMARY | jq -r '.vulnerabilities.medium')" >> $GITHUB_OUTPUT
+          echo "overall_risk=$(echo $EXEC_SUMMARY | jq -r '.overall_risk')" >> $GITHUB_OUTPUT
+          echo "risk_emoji=$(echo $EXEC_SUMMARY | jq -r '.risk_emoji')" >> $GITHUB_OUTPUT
+          echo "main_domains=$(echo $EXEC_SUMMARY | jq -r '.main_domains')" >> $GITHUB_OUTPUT
+
+      - name: Upload executive report
+        uses: actions/upload-artifact@v3
+        with:
+          name: executive-report-${{ github.run_number }}
+          path: |
+            autoDAST/executive-reports/**/*
+          retention-days: 365
+
+      - name: Create release with reports
+        if: github.event_name == 'schedule'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: monthly-scan-${{ github.run_number }}
+          name: Monthly Security Scan Report - ${{ github.run_number }}
+          body: |
+            ## ${{ steps.exec_report.outputs.risk_emoji }} Integrated Monthly Security Scan Report
+
+            **Scan Date:** ${{ github.run_started_at }}
+            **Overall Risk Level:** ${{ steps.exec_report.outputs.overall_risk }}
+            **Main Domains:** ${{ steps.exec_report.outputs.main_domains }}
+            **Targets Configured:** ${{ steps.exec_report.outputs.targets_configured }}
+            **Targets Scanned:** ${{ steps.exec_report.outputs.targets_scanned }}
+            **Total Vulnerabilities:** ${{ steps.exec_report.outputs.total_vulns }}
+
+            ### Vulnerability Breakdown:
+            - **Critical:** ${{ steps.exec_report.outputs.critical_vulns }}
+            - **Medium:** ${{ steps.exec_report.outputs.medium_vulns }}
+
+            ### Integration Features:
+            - ✅ **Subdomain Discovery Integration** - Automatically scans discovered subdomains
+            - ✅ **Dynamic Target Management** - Reads from domains.txt and subdomains directory
+            - ✅ **Executive Reporting** - Comprehensive analysis across all discovered assets
+
+            ### Contents:
+            - Individual scan reports for each target
+            - Executive summary with domain-level breakdown
+            - Subdomain-specific vulnerability analysis
+            - Trend analysis and remediation guidance
+
+            ### Next Steps:
+            1. Review executive summary for domain-level risk assessment
+            2. Examine subdomain-specific vulnerabilities
+            3. Update subdomain discovery rules based on findings
+            4. Prioritize remediation by domain criticality
+          files: |
+            autoDAST/executive-reports/**/*
+          draft: false
+          prerelease: false
+
+  notify-google-workspace:
+    runs-on: ubuntu-latest
+    needs: [discover-targets, security-scan, generate-executive-report]
+    if: always() && needs.discover-targets.outputs.has-targets == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download executive report
+        uses: actions/download-artifact@v3
+        with:
+          name: executive-report-${{ github.run_number }}
+          path: executive-reports/
+
+      - name: Send Google Workspace Alert
+        working-directory: ./autoDAST
+        env:
+          GOOGLE_WEBHOOK_URL: ${{ secrets.GOOGLE_WORKSPACE_WEBHOOK_URL }}
+        run: |
+          # Install required dependencies for Google Chat
+          pip install requests
+
+          # Read executive summary
+          if [ -f "../executive-reports/executive_summary.json" ]; then
+            SUMMARY_FILE="../executive-reports/executive_summary.json"
+          else
+            # Fallback: create basic summary
+            echo '{"overall_risk":"Unknown","targets_configured":0,"targets_scanned":0,"main_domains":0,"vulnerabilities":{"total":0,"critical":0,"medium":0}}' > fallback_summary.json
+            SUMMARY_FILE="fallback_summary.json"
+          fi
+
+          # Generate and send Google Chat message
+          python -c "
+          import json
+          import requests
+          import os
+          from datetime import datetime
+
+          webhook_url = os.environ.get('GOOGLE_WEBHOOK_URL')
+          if not webhook_url:
+              print('Google Workspace webhook URL not configured')
+              exit(0)
+
+          # Load executive summary
+          with open('$SUMMARY_FILE', 'r') as f:
+              summary = json.load(f)
+
+          overall_risk = summary.get('overall_risk', 'Unknown')
+          risk_emoji = summary.get('risk_emoji', '🔍')
+          targets_configured = summary.get('targets_configured', 0)
+          targets_scanned = summary.get('targets_scanned', 0)
+          main_domains = summary.get('main_domains', 0)
+          scan_type = summary.get('scan_type', 'scheduled')
+          vulns = summary.get('vulnerabilities', {})
+          total_vulns = vulns.get('total', 0)
+          critical_vulns = vulns.get('critical', 0)
+          medium_vulns = vulns.get('medium', 0)
+          low_vulns = vulns.get('low', 0)
+
+          # Determine message color and priority
+          if critical_vulns > 0:
+              color = '#dc3545'  # Red
+              priority = 'HIGH PRIORITY'
+          elif medium_vulns > 0:
+              color = '#fd7e14'  # Orange
+              priority = 'MEDIUM PRIORITY'
+          elif total_vulns > 0:
+              color = '#28a745'  # Green
+              priority = 'LOW PRIORITY'
+          else:
+              color = '#28a745'  # Green
+              priority = 'INFORMATIONAL'
+
+          # Build rich Google Chat card message with subdomain integration info
+          message = {
+              'cards': [{
+                  'header': {
+                      'title': f'{risk_emoji} Integrated Security Scan Report',
+                      'subtitle': f'{priority} - {datetime.now().strftime(\"%B %Y\")} - {scan_type.title()} Scan',
+                      'imageUrl': 'https://developers.google.com/chat/images/quickstart-app-avatar.png'
+                  },
+                  'sections': [
+                      {
+                          'widgets': [
+                              {
+                                  'keyValue': {
+                                      'topLabel': 'Overall Risk Level',
+                                      'content': f'{risk_emoji} {overall_risk}',
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': 'Main Domains',
+                                      'content': str(main_domains),
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': 'Targets Scanned',
+                                      'content': f'{targets_scanned} of {targets_configured} configured',
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': 'Total Vulnerabilities',
+                                      'content': str(total_vulns),
+                                      'contentMultiline': False
+                                  }
+                              }
+                          ]
+                      },
+                      {
+                          'header': 'Vulnerability Breakdown',
+                          'widgets': [
+                              {
+                                  'keyValue': {
+                                      'topLabel': '🔴 Critical',
+                                      'content': str(critical_vulns),
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': '🟡 Medium',
+                                      'content': str(medium_vulns),
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': '🟢 Low',
+                                      'content': str(low_vulns),
+                                      'contentMultiline': False
+                                  }
+                              }
+                          ]
+                      },
+                      {
+                          'header': 'Integration Status',
+                          'widgets': [
+                              {
+                                  'keyValue': {
+                                      'topLabel': '🔍 Subdomain Discovery',
+                                      'content': '✅ Integrated & Active',
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': '🎯 Dynamic Targeting',
+                                      'content': f'✅ {targets_configured} targets from discovery',
+                                      'contentMultiline': False
+                                  }
+                              }
+                          ]
+                      },
+                      {
+                          'header': 'Executive Summary',
+                          'widgets': [
+                              {
+                                  'textParagraph': {
+                                      'text': f'''
+          **Integrated Security Assessment Completed:**
+          • {main_domains} main domains with full subdomain coverage
+          • {targets_scanned} targets scanned from dynamic discovery
+          • {total_vulns} total security findings across all subdomains
+          • Risk level: {overall_risk}
+
+          **Subdomain Integration Highlights:**
+          • Automated target discovery from domains.txt and subdomains directory
+          • Real-time scanning of newly discovered subdomains
+          • Domain-grouped vulnerability analysis
+          • Executive-level reporting with subdomain breakdown
+
+          **Immediate Actions Required:**
+          {f\"• Address {critical_vulns} critical vulnerabilities across subdomains immediately\" if critical_vulns > 0 else \"\"}
+          {f\"• Review and plan remediation for {medium_vulns} medium-risk issues in subdomain infrastructure\" if medium_vulns > 0 else \"\"}
+          {\"• Maintain current security posture - no critical issues found across subdomain portfolio\" if critical_vulns == 0 and medium_vulns == 0 else \"\"}
+
+          **Next Steps:**
+          1. Security team to review domain-level breakdown in GitHub
+          2. Update subdomain discovery rules based on findings
+          3. Prioritize remediation by domain criticality and business impact
+          4. Configure alerts for new subdomain discoveries
+                                      '''
+                                  }
+                              }
+                          ]
+                      },
+                      {
+                          'widgets': [
+                              {
+                                  'buttons': [
+                                      {
+                                          'textButton': {
+                                              'text': '📊 View Detailed Reports',
+                                              'onClick': {
+                                                  'openLink': {
+                                                      'url': f'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+                                                  }
+                                              }
+                                          }
+                                      },
+                                      {
+                                          'textButton': {
+                                              'text': '📈 View Releases',
+                                              'onClick': {
+                                                  'openLink': {
+                                                      'url': f'https://github.com/${{ github.repository }}/releases'
+                                                  }
+                                              }
+                                          }
+                                      }
+                                  ]
+                              }
+                          ]
+                      }
+                  ]
+              }]
+          }
+
+          # Send message to Google Chat
+          try:
+              response = requests.post(
+                  webhook_url,
+                  json=message,
+                  headers={'Content-Type': 'application/json'},
+                  timeout=30
+              )
+              response.raise_for_status()
+              print(f'✅ Successfully sent integrated security summary to Google Workspace')
+              print(f'Response: {response.status_code}')
+          except requests.exceptions.RequestException as e:
+              print(f'❌ Failed to send Google Workspace alert: {e}')
+              exit(1)
+          "
+
+      - name: Upload notification summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: notification-summary-${{ github.run_number }}
+          path: executive-reports/
+          retention-days: 30
+
+  notify-no-targets:
+    runs-on: ubuntu-latest
+    needs: discover-targets
+    if: needs.discover-targets.outputs.has-targets == 'false'
+
+    steps:
+      - name: No targets notification
+        run: |
+          echo "### ⚠️ No Targets Configured" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No domains were found in targets/domains.txt or no subdomains discovered." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Add domains to targets/domains.txt" >> $GITHUB_STEP_SUMMARY
+          echo "2. Ensure subdomain discovery is working" >> $GITHUB_STEP_SUMMARY
+          echo "3. Check targets/subdomains/ directory for subdomain files" >> $GITHUB_STEP_SUMMARY

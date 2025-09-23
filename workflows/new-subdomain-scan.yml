@@ -1,0 +1,709 @@
+name: New Subdomain Security Scan
+
+on:
+  push:
+    paths:
+      - 'targets/domains.txt'
+      - 'targets/subdomains/**'
+  pull_request:
+    paths:
+      - 'targets/domains.txt'
+      - 'targets/subdomains/**'
+  workflow_dispatch:
+    inputs:
+      force_scan_all:
+        description: 'Force scan all targets (not just new ones)'
+        required: false
+        default: false
+        type: boolean
+      scan_policy:
+        description: 'Scan policy to use'
+        required: false
+        default: 'quick'
+        type: choice
+        options:
+          - quick
+          - comprehensive
+          - baseline
+
+env:
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      has-new-targets: ${{ steps.detect-new.outputs.has-new-targets }}
+      new-targets: ${{ steps.detect-new.outputs.new-targets }}
+      changed-files: ${{ steps.detect-new.outputs.changed-files }}
+      scan-matrix: ${{ steps.detect-new.outputs.scan-matrix }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history to detect changes
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        working-directory: ./autoDAST
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download previous targets
+        uses: actions/download-artifact@v3
+        continue-on-error: true
+        with:
+          name: previous-targets
+          path: ./previous/
+
+      - name: Detect new subdomains and changes
+        id: detect-new
+        working-directory: ./autoDAST
+        run: |
+          # Check if this is a manual run with force scan all
+          if [ "${{ github.event.inputs.force_scan_all }}" = "true" ]; then
+            echo "Force scan all targets requested"
+
+            # Get all targets
+            python src/target_manager.py --targets-dir ../targets --action matrix --max-per-job 30 > matrix.json
+
+            if [ -f "matrix.json" ]; then
+              MATRIX_CONTENT=$(cat matrix.json)
+              echo "scan-matrix=$MATRIX_CONTENT" >> $GITHUB_OUTPUT
+
+              if echo "$MATRIX_CONTENT" | jq -e '.include | length > 0' > /dev/null; then
+                echo "has-new-targets=true" >> $GITHUB_OUTPUT
+                echo "new-targets=force-all" >> $GITHUB_OUTPUT
+              else
+                echo "has-new-targets=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "has-new-targets=false" >> $GITHUB_OUTPUT
+            fi
+
+            echo "changed-files=force-all" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get changed files from git
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # For push events, compare with previous commit
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep -E '(targets/domains\.txt|targets/subdomains/)' || echo "")
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            # For PR events, compare with base branch
+            CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '(targets/domains\.txt|targets/subdomains/)' || echo "")
+          else
+            # Fallback: detect all files
+            CHANGED_FILES="targets/domains.txt targets/subdomains/"
+          fi
+
+          echo "Changed files: $CHANGED_FILES"
+          echo "changed-files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No target-related files changed"
+            echo "has-new-targets=false" >> $GITHUB_OUTPUT
+            echo "new-targets=" >> $GITHUB_OUTPUT
+            echo "scan-matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Detect new targets compared to previous scan
+          if [ -f "../previous/targets.json" ]; then
+            echo "Comparing with previous targets..."
+            python src/target_manager.py --targets-dir ../targets --action detect-new --previous-targets ../previous/targets.json > new-targets.json
+
+            # Check if we have new targets
+            if [ -s "new-targets.json" ] && [ "$(cat new-targets.json)" != "{}" ]; then
+              echo "New targets detected!"
+              NEW_TARGETS_CONTENT=$(cat new-targets.json)
+              echo "new-targets=$NEW_TARGETS_CONTENT" >> $GITHUB_OUTPUT
+
+              # Generate matrix for new targets only
+              python -c "
+          import json
+          import sys
+
+          try:
+              with open('new-targets.json', 'r') as f:
+                  new_targets = json.load(f)
+
+              if not new_targets:
+                  matrix = {'include': []}
+              else:
+                  # Flatten new targets and create matrix
+                  all_new = []
+                  for domain, targets in new_targets.items():
+                      all_new.extend(targets)
+
+                  if all_new:
+                      # Split into chunks for parallel processing
+                      chunk_size = 20
+                      chunks = [all_new[i:i + chunk_size] for i in range(0, len(all_new), chunk_size)]
+
+                      matrix = {'include': []}
+                      for i, chunk in enumerate(chunks):
+                          matrix['include'].append({
+                              'job_name': f'scan-new-batch-{i+1}',
+                              'targets': ','.join(chunk),
+                              'is_new': True
+                          })
+                  else:
+                      matrix = {'include': []}
+
+              print(json.dumps(matrix))
+          except Exception as e:
+              print(f'Error processing new targets: {e}', file=sys.stderr)
+              matrix = {'include': []}
+              print(json.dumps(matrix))
+              " > matrix.json
+
+              if [ -f "matrix.json" ]; then
+                MATRIX_CONTENT=$(cat matrix.json)
+                echo "scan-matrix=$MATRIX_CONTENT" >> $GITHUB_OUTPUT
+
+                if echo "$MATRIX_CONTENT" | jq -e '.include | length > 0' > /dev/null; then
+                  echo "has-new-targets=true" >> $GITHUB_OUTPUT
+                else
+                  echo "has-new-targets=false" >> $GITHUB_OUTPUT
+                fi
+              else
+                echo "has-new-targets=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "No new targets detected"
+              echo "has-new-targets=false" >> $GITHUB_OUTPUT
+              echo "new-targets=" >> $GITHUB_OUTPUT
+              echo "scan-matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No previous targets file, scanning all current targets"
+
+            # Generate matrix for all current targets
+            python src/target_manager.py --targets-dir ../targets --action matrix --max-per-job 30 > matrix.json
+
+            if [ -f "matrix.json" ]; then
+              MATRIX_CONTENT=$(cat matrix.json)
+              echo "scan-matrix=$MATRIX_CONTENT" >> $GITHUB_OUTPUT
+
+              if echo "$MATRIX_CONTENT" | jq -e '.include | length > 0' > /dev/null; then
+                echo "has-new-targets=true" >> $GITHUB_OUTPUT
+                echo "new-targets=all-current" >> $GITHUB_OUTPUT
+              else
+                echo "has-new-targets=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "has-new-targets=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+          # Save current targets for next comparison
+          python src/target_manager.py --targets-dir ../targets --save-current current-targets.json
+
+      - name: Upload current targets for future comparison
+        uses: actions/upload-artifact@v3
+        with:
+          name: previous-targets
+          path: autoDAST/current-targets.json
+          retention-days: 90
+
+  rapid-security-scan:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has-new-targets == 'true'
+    timeout-minutes: 240  # 4 hours timeout for new subdomain scans
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect-changes.outputs.scan-matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        working-directory: ./autoDAST
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Docker
+        run: |
+          docker --version
+
+      - name: Create reports directory
+        run: |
+          mkdir -p autoDAST/reports
+          mkdir -p autoDAST/rapid-reports
+
+      - name: Configure AutoDast for rapid scanning
+        working-directory: ./autoDAST
+        run: |
+          # Create optimized config for rapid new subdomain scanning
+          cat > config.json << EOF
+          {
+            "zap": {
+              "mode": "docker",
+              "docker_image": "zaproxy/zap-stable:latest",
+              "timeout": 180
+            },
+            "targets": {},
+            "webhook": {
+              "enabled": false
+            },
+            "scheduler": {
+              "enabled": false
+            }
+          }
+          EOF
+
+      - name: Run rapid security scans
+        id: rapid-scan
+        working-directory: ./autoDAST
+        run: |
+          POLICY="${{ github.event.inputs.scan_policy || 'quick' }}"
+          TARGETS="${{ matrix.targets }}"
+          IS_NEW="${{ matrix.is_new || false }}"
+
+          echo "Running rapid scans for targets: $TARGETS with policy: $POLICY"
+          echo "New subdomain scan: $IS_NEW"
+
+          # Convert comma-separated targets to array
+          IFS=',' read -ra TARGET_ARRAY <<< "$TARGETS"
+
+          SUCCESSFUL_SCANS=0
+          FAILED_SCANS=0
+          RAPID_SUMMARIES=()
+          NEW_FINDINGS=()
+
+          for TARGET in "${TARGET_ARRAY[@]}"; do
+            TARGET=$(echo "$TARGET" | xargs)  # Trim whitespace
+            echo "Scanning new target: $TARGET"
+
+            # Run the scan with rapid settings
+            if timeout 600 python main.py scan "$TARGET" --policy "$POLICY" > "rapid_scan_${TARGET//[^a-zA-Z0-9]/_}.log" 2>&1; then
+              echo "✅ Rapid scan completed for $TARGET"
+              SUCCESSFUL_SCANS=$((SUCCESSFUL_SCANS + 1))
+
+              # Find the latest report for this target
+              LATEST_REPORT=$(find reports -name "*${TARGET//[^a-zA-Z0-9]/_}*.json" -type f -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2- || echo "")
+
+              if [ -n "$LATEST_REPORT" ] && [ -f "$LATEST_REPORT" ]; then
+                # Extract summary from report
+                HIGH_VULNS=$(jq -r '.summary.High // 0' "$LATEST_REPORT")
+                MEDIUM_VULNS=$(jq -r '.summary.Medium // 0' "$LATEST_REPORT")
+                LOW_VULNS=$(jq -r '.summary.Low // 0' "$LATEST_REPORT")
+                TOTAL=$((HIGH_VULNS + MEDIUM_VULNS + LOW_VULNS))
+
+                RAPID_SUMMARIES+=("{\"target\":\"$TARGET\",\"high\":$HIGH_VULNS,\"medium\":$MEDIUM_VULNS,\"low\":$LOW_VULNS,\"total\":$TOTAL,\"is_new\":$IS_NEW}")
+
+                # Check for critical findings in new subdomains
+                if [ "$IS_NEW" = "true" ] && [ $((HIGH_VULNS + MEDIUM_VULNS)) -gt 0 ]; then
+                  NEW_FINDINGS+=("$TARGET: Critical($HIGH_VULNS) Medium($MEDIUM_VULNS)")
+                fi
+
+                # Copy report to rapid-reports directory for easy access
+                cp "$LATEST_REPORT" "rapid-reports/"
+              fi
+            else
+              echo "❌ Rapid scan failed for $TARGET"
+              FAILED_SCANS=$((FAILED_SCANS + 1))
+              cat "rapid_scan_${TARGET//[^a-zA-Z0-9]/_}.log" || echo "No log available"
+            fi
+          done
+
+          echo "successful_scans=$SUCCESSFUL_SCANS" >> $GITHUB_OUTPUT
+          echo "failed_scans=$FAILED_SCANS" >> $GITHUB_OUTPUT
+          echo "total_targets=${#TARGET_ARRAY[@]}" >> $GITHUB_OUTPUT
+
+          # Create rapid scan summary
+          printf "[%s]" "$(IFS=","; echo "${RAPID_SUMMARIES[*]}")" > rapid_summary.json
+          echo "rapid_summary=$(cat rapid_summary.json)" >> $GITHUB_OUTPUT
+
+          # Create new findings summary
+          if [ ${#NEW_FINDINGS[@]} -gt 0 ]; then
+            printf "%s\n" "${NEW_FINDINGS[@]}" > new_findings.txt
+            echo "new_findings=$(cat new_findings.txt | tr '\n' '; ')" >> $GITHUB_OUTPUT
+            echo "has_critical_new=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_critical_new=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload rapid scan artifacts
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: rapid-scan-results-${{ matrix.job_name }}
+          path: |
+            autoDAST/rapid-reports/**/*
+            autoDAST/rapid_scan_*.log
+            autoDAST/rapid_summary.json
+            autoDAST/new_findings.txt
+          retention-days: 30
+
+  notify-new-findings:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, rapid-security-scan]
+    if: always() && needs.detect-changes.outputs.has-new-targets == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download rapid scan artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts/
+
+      - name: Analyze new subdomain findings
+        id: analyze
+        run: |
+          # Collect all rapid summaries
+          mkdir -p rapid-summaries
+          find artifacts -name "rapid_summary.json" -exec cp {} rapid-summaries/ \; 2>/dev/null || true
+
+          # Analyze findings
+          python -c "
+          import json
+          import glob
+          import os
+          from datetime import datetime
+
+          # Collect all rapid scan results
+          all_results = []
+          for summary_file in glob.glob('rapid-summaries/rapid_summary.json'):
+              try:
+                  with open(summary_file, 'r') as f:
+                      batch_data = json.load(f)
+                      if isinstance(batch_data, list):
+                          all_results.extend(batch_data)
+              except Exception as e:
+                  print(f'Error reading rapid summary: {e}')
+
+          # Calculate statistics
+          total_scanned = len(all_results)
+          new_targets = [r for r in all_results if r.get('is_new', False)]
+          total_new = len(new_targets)
+
+          total_critical = sum(r.get('high', 0) for r in all_results)
+          total_medium = sum(r.get('medium', 0) for r in all_results)
+          total_vulns = sum(r.get('total', 0) for r in all_results)
+
+          new_critical = sum(r.get('high', 0) for r in new_targets)
+          new_medium = sum(r.get('medium', 0) for r in new_targets)
+
+          # Determine urgency level
+          if new_critical > 0:
+              urgency = 'URGENT'
+              urgency_emoji = '🚨'
+          elif new_medium > 0:
+              urgency = 'HIGH'
+              urgency_emoji = '⚠️'
+          elif total_vulns > 0:
+              urgency = 'MEDIUM'
+              urgency_emoji = '🔍'
+          else:
+              urgency = 'LOW'
+              urgency_emoji = '✅'
+
+          # Generate summary
+          summary = {
+              'scan_date': datetime.now().isoformat(),
+              'trigger_event': '${{ github.event_name }}',
+              'urgency': urgency,
+              'urgency_emoji': urgency_emoji,
+              'total_scanned': total_scanned,
+              'new_targets': total_new,
+              'vulnerabilities': {
+                  'total': total_vulns,
+                  'critical': total_critical,
+                  'medium': total_medium,
+                  'new_critical': new_critical,
+                  'new_medium': new_medium
+              },
+              'scan_results': all_results,
+              'changed_files': '${{ needs.detect-changes.outputs.changed-files }}'
+          }
+
+          # Save summary
+          with open('new_findings_summary.json', 'w') as f:
+              json.dump(summary, f, indent=2)
+
+          # Output for GitHub Actions
+          print(f'total_scanned={total_scanned}')
+          print(f'new_targets={total_new}')
+          print(f'total_vulns={total_vulns}')
+          print(f'new_critical={new_critical}')
+          print(f'new_medium={new_medium}')
+          print(f'urgency={urgency}')
+          print(f'urgency_emoji={urgency_emoji}')
+          "
+
+          # Set outputs
+          SUMMARY_CONTENT=$(cat new_findings_summary.json)
+          echo "total_scanned=$(echo $SUMMARY_CONTENT | jq -r '.total_scanned')" >> $GITHUB_OUTPUT
+          echo "new_targets=$(echo $SUMMARY_CONTENT | jq -r '.new_targets')" >> $GITHUB_OUTPUT
+          echo "total_vulns=$(echo $SUMMARY_CONTENT | jq -r '.vulnerabilities.total')" >> $GITHUB_OUTPUT
+          echo "new_critical=$(echo $SUMMARY_CONTENT | jq -r '.vulnerabilities.new_critical')" >> $GITHUB_OUTPUT
+          echo "new_medium=$(echo $SUMMARY_CONTENT | jq -r '.vulnerabilities.new_medium')" >> $GITHUB_OUTPUT
+          echo "urgency=$(echo $SUMMARY_CONTENT | jq -r '.urgency')" >> $GITHUB_OUTPUT
+          echo "urgency_emoji=$(echo $SUMMARY_CONTENT | jq -r '.urgency_emoji')" >> $GITHUB_OUTPUT
+
+      - name: Send urgent Google Workspace alert for new findings
+        env:
+          GOOGLE_WEBHOOK_URL: ${{ secrets.GOOGLE_WORKSPACE_WEBHOOK_URL }}
+        run: |
+          pip install requests
+
+          python -c "
+          import json
+          import requests
+          import os
+          from datetime import datetime
+
+          webhook_url = os.environ.get('GOOGLE_WEBHOOK_URL')
+          if not webhook_url:
+              print('Google Workspace webhook URL not configured')
+              exit(0)
+
+          # Load findings summary
+          try:
+              with open('new_findings_summary.json', 'r') as f:
+                  summary = json.load(f)
+          except:
+              print('No findings summary available')
+              exit(0)
+
+          urgency = summary.get('urgency', 'UNKNOWN')
+          urgency_emoji = summary.get('urgency_emoji', '🔍')
+          total_scanned = summary.get('total_scanned', 0)
+          new_targets = summary.get('new_targets', 0)
+          vulns = summary.get('vulnerabilities', {})
+          new_critical = vulns.get('new_critical', 0)
+          new_medium = vulns.get('new_medium', 0)
+          total_vulns = vulns.get('total', 0)
+          trigger_event = summary.get('trigger_event', 'unknown')
+
+          # Determine message urgency and color
+          if urgency == 'URGENT':
+              color = '#dc3545'  # Red
+          elif urgency == 'HIGH':
+              color = '#fd7e14'  # Orange
+          elif urgency == 'MEDIUM':
+              color = '#ffc107'  # Yellow
+          else:
+              color = '#28a745'  # Green
+
+          # Build urgent notification message
+          message = {
+              'cards': [{
+                  'header': {
+                      'title': f'{urgency_emoji} New Subdomain Security Alert',
+                      'subtitle': f'{urgency} Priority - Triggered by {trigger_event}',
+                      'imageUrl': 'https://developers.google.com/chat/images/quickstart-app-avatar.png'
+                  },
+                  'sections': [
+                      {
+                          'widgets': [
+                              {
+                                  'keyValue': {
+                                      'topLabel': 'Alert Priority',
+                                      'content': f'{urgency_emoji} {urgency}',
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': 'New Targets Scanned',
+                                      'content': f'{new_targets} new subdomains',
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': 'Total Targets Scanned',
+                                      'content': str(total_scanned),
+                                      'contentMultiline': False
+                                  }
+                              }
+                          ]
+                      },
+                      {
+                          'header': 'New Vulnerability Findings',
+                          'widgets': [
+                              {
+                                  'keyValue': {
+                                      'topLabel': '🔴 New Critical',
+                                      'content': str(new_critical),
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': '🟡 New Medium',
+                                      'content': str(new_medium),
+                                      'contentMultiline': False
+                                  }
+                              },
+                              {
+                                  'keyValue': {
+                                      'topLabel': 'Total Findings',
+                                      'content': str(total_vulns),
+                                      'contentMultiline': False
+                                  }
+                              }
+                          ]
+                      },
+                      {
+                          'header': 'Immediate Actions',
+                          'widgets': [
+                              {
+                                  'textParagraph': {
+                                      'text': f'''
+          **New Subdomain Discovery Alert:**
+          • {new_targets} new subdomains discovered and scanned
+          • {total_scanned} total targets processed in rapid assessment
+          • {total_vulns} total security findings identified
+
+          **Immediate Response Required:**
+          {f\"🚨 URGENT: {new_critical} critical vulnerabilities in new subdomains - Address immediately\" if new_critical > 0 else \"\"}
+          {f\"⚠️ HIGH: {new_medium} medium-risk issues in new subdomain infrastructure - Review within 24h\" if new_medium > 0 and new_critical == 0 else \"\"}
+          {\"✅ No critical issues in new subdomains - Continue monitoring\" if new_critical == 0 and new_medium == 0 else \"\"}
+
+          **Integration Status:**
+          • Automated subdomain discovery: ✅ Active
+          • Rapid security assessment: ✅ Completed
+          • Real-time alerting: ✅ Functional
+
+          **Next Steps:**
+          1. Security team to investigate new subdomain findings immediately
+          2. Update subdomain discovery rules if needed
+          3. Verify new subdomains are authorized assets
+          4. Schedule comprehensive scans for newly discovered critical assets
+                                      '''
+                                  }
+                              }
+                          ]
+                      },
+                      {
+                          'widgets': [
+                              {
+                                  'buttons': [
+                                      {
+                                          'textButton': {
+                                              'text': '🔍 View Scan Results',
+                                              'onClick': {
+                                                  'openLink': {
+                                                      'url': f'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+                                                  }
+                                              }
+                                          }
+                                      },
+                                      {
+                                          'textButton': {
+                                              'text': '📁 View Changed Files',
+                                              'onClick': {
+                                                  'openLink': {
+                                                      'url': f'https://github.com/${{ github.repository }}/commit/${{ github.sha }}'
+                                                  }
+                                              }
+                                          }
+                                      }
+                                  ]
+                              }
+                          ]
+                      }
+                  ]
+              }]
+          }
+
+          # Send urgent notification
+          try:
+              response = requests.post(
+                  webhook_url,
+                  json=message,
+                  headers={'Content-Type': 'application/json'},
+                  timeout=30
+              )
+              response.raise_for_status()
+              print(f'✅ Successfully sent urgent new subdomain alert to Google Workspace')
+              print(f'Priority: {urgency}, New targets: {new_targets}, Critical: {new_critical}')
+          except requests.exceptions.RequestException as e:
+              print(f'❌ Failed to send urgent alert: {e}')
+              exit(1)
+          "
+
+      - name: Create GitHub issue for critical findings
+        if: steps.analyze.outputs.new_critical > 0
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const newCritical = '${{ steps.analyze.outputs.new_critical }}';
+            const newTargets = '${{ steps.analyze.outputs.new_targets }}';
+            const urgencyEmoji = '${{ steps.analyze.outputs.urgency_emoji }}';
+
+            const issueBody = `${urgencyEmoji} **URGENT: Critical Vulnerabilities in New Subdomains**
+
+            **Alert Summary:**
+            - **New Subdomains:** ${newTargets}
+            - **Critical Vulnerabilities:** ${newCritical}
+            - **Scan Trigger:** ${{ github.event_name }}
+            - **Detection Time:** ${new Date().toISOString()}
+
+            **Immediate Actions Required:**
+            1. 🔴 **Priority 1**: Review and address critical vulnerabilities immediately
+            2. 🔍 **Verify Assets**: Confirm new subdomains are authorized
+            3. 📊 **Full Assessment**: Schedule comprehensive security scan
+            4. 🔒 **Access Control**: Review subdomain access permissions
+
+            **Resources:**
+            - [Scan Results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            - [Changed Files](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+
+            ---
+            *Auto-generated by New Subdomain Security Scan workflow*`;
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `${urgencyEmoji} URGENT: ${newCritical} Critical Vulnerabilities in ${newTargets} New Subdomains`,
+              body: issueBody,
+              labels: ['security', 'urgent', 'subdomain-discovery']
+            });
+
+      - name: Update workflow summary
+        run: |
+          echo "### ${{ steps.analyze.outputs.urgency_emoji }} New Subdomain Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Priority Level:** ${{ steps.analyze.outputs.urgency }}" >> $GITHUB_STEP_SUMMARY
+          echo "**New Targets:** ${{ steps.analyze.outputs.new_targets }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Total Scanned:** ${{ steps.analyze.outputs.total_scanned }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Critical Findings:** ${{ steps.analyze.outputs.new_critical }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Medium Findings:** ${{ steps.analyze.outputs.new_medium }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Changed Files:** ${{ needs.detect-changes.outputs.changed-files }}" >> $GITHUB_STEP_SUMMARY
