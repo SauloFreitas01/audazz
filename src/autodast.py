@@ -1,6 +1,8 @@
 import logging
 import signal
 import sys
+import json
+import os
 from typing import Dict, Any, Optional
 from .config import Config, load_config, save_config, Target
 from .zap_client import ZapClient
@@ -8,6 +10,8 @@ from .scheduler import ScanScheduler
 from .storage import FileStorage
 from .report_generator import ReportGenerator
 from .google_chat import GoogleChatNotifier
+from .target_manager import TargetManager
+from .executive_report_generator import ExecutiveReportGenerator
 
 
 logging.basicConfig(
@@ -21,6 +25,7 @@ class AutoDast:
     def __init__(self, config_path: str = "config.yaml"):
         self.config_path = config_path
         self.config = load_config(config_path)
+        self.target_manager = TargetManager("targets")
         self.zap_client = ZapClient(self.config)
         self.storage = FileStorage()
         self.report_generator = ReportGenerator(
@@ -28,12 +33,38 @@ class AutoDast:
             templates_dir="templates"
         )
         self.google_chat = GoogleChatNotifier(self.config.google_chat.webhook_url)
+        self.executive_report_generator = ExecutiveReportGenerator()
         self.scheduler = ScanScheduler(self._execute_scan)
         self.running = False
 
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+
+    def _get_all_targets(self) -> list[Target]:
+        """Get all targets from both file-based and config-based sources."""
+        targets = []
+
+        if self.config.targets.source_type == "file_based":
+            # Get targets from TargetManager
+            flat_targets = self.target_manager.get_flat_target_list()
+            for target_url in flat_targets:
+                # Determine scan policy based on target type
+                if any(domain in target_url for domain in self.target_manager.get_main_domains()):
+                    policy = self.config.targets.default_policies.get("main_domain", "default")
+                else:
+                    policy = self.config.targets.default_policies.get("subdomain", "quick")
+
+                targets.append(Target(
+                    name=target_url.replace("https://", "").replace("http://", "").replace(".", "-"),
+                    url=f"https://{target_url}" if not target_url.startswith("http") else target_url,
+                    scan_policy=policy
+                ))
+
+        # Add legacy config-based targets
+        targets.extend(self.config.targets.legacy_targets)
+
+        return targets
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully."""
@@ -61,7 +92,8 @@ class AutoDast:
             return False
 
         # Schedule periodic scans for all targets
-        for target in self.config.targets:
+        all_targets = self._get_all_targets()
+        for target in all_targets:
             self.scheduler.schedule_target(
                 target.name,
                 target.url,
@@ -79,14 +111,14 @@ class AutoDast:
             self.google_chat.send_status_notification(
                 "AutoDast monitoring system started successfully",
                 {
-                    "Targets Monitored": len(self.config.targets),
+                    "Targets Monitored": len(all_targets),
                     "Scan Interval": f"{self.config.scheduler.interval_hours} hours",
                     "ZAP Mode": zap_status.get("mode", "unknown"),
                     "ZAP Version": zap_status.get("version", "unknown")
                 }
             )
 
-        logger.info(f"AutoDast started successfully - monitoring {len(self.config.targets)} targets")
+        logger.info(f"AutoDast started successfully - monitoring {len(all_targets)} targets")
         return True
 
     def stop(self):
@@ -127,7 +159,7 @@ class AutoDast:
             # Send notification if configured
             if self.config.google_chat.webhook_url:
                 summary = self.report_generator.generate_summary_report(scan_result)
-                self.google_chat.send_scan_notification(summary)
+                self.google_chat.send_scan_notification(summary, report_files)
 
             logger.info(f"Scan completed successfully for {target_name}")
             return {
@@ -247,14 +279,16 @@ class AutoDast:
 
     def _get_target_by_name(self, target_name: str):
         """Get target configuration by name."""
-        for target in self.config.targets:
+        all_targets = self._get_all_targets()
+        for target in all_targets:
             if target.name == target_name:
                 return target
         return None
 
     def _get_target_name_by_url(self, target_url: str) -> str:
         """Get target name by URL."""
-        for target in self.config.targets:
+        all_targets = self._get_all_targets()
+        for target in all_targets:
             if target.url == target_url:
                 return target.name
         return "unknown"
@@ -262,12 +296,13 @@ class AutoDast:
     def get_system_status(self) -> Dict[str, Any]:
         """Get comprehensive system status."""
         zap_status = self.zap_client.get_zap_status()
+        all_targets = self._get_all_targets()
         return {
             "running": self.running,
             "zap_available": zap_status["available"],
             "zap_status": zap_status,
             "scheduler_status": self.scheduler.get_scheduler_status(),
-            "targets_count": len(self.config.targets),
+            "targets_count": len(all_targets),
             "webhook_configured": bool(self.config.google_chat.webhook_url)
         }
 
@@ -295,8 +330,8 @@ class AutoDast:
             scan_policy=scan_policy or "default"
         )
 
-        # Add to current configuration
-        self.config.targets.append(new_target)
+        # Add to current configuration (legacy targets)
+        self.config.targets.legacy_targets.append(new_target)
 
         # Persist to configuration file
         self._save_config()
@@ -327,3 +362,49 @@ class AutoDast:
 
         # Create new target
         return self._create_dynamic_target(name, url, scan_policy)
+
+    def generate_monthly_executive_report(self) -> Dict[str, Any]:
+        """Generate monthly executive report and send notification."""
+        try:
+            logger.info("Generating monthly executive report...")
+
+            # Generate the executive report
+            report_files = self.executive_report_generator.generate_monthly_executive_report()
+
+            if not report_files:
+                logger.warning("No report files generated")
+                return {"success": False, "error": "No report files generated"}
+
+            # Load executive summary for notification
+            summary_file = report_files.get('executive_summary')
+            if summary_file and os.path.exists(summary_file):
+                with open(summary_file, 'r', encoding='utf-8') as f:
+                    executive_summary = json.load(f)
+
+                # Send Google Chat notification with report files
+                if self.config.google_chat.webhook_url:
+                    notification_sent = self.google_chat.send_monthly_report_notification(
+                        executive_summary, report_files
+                    )
+                    if notification_sent:
+                        logger.info("Monthly report notification sent successfully")
+                    else:
+                        logger.warning("Failed to send monthly report notification")
+                else:
+                    logger.info("Google Chat webhook not configured, skipping notification")
+
+                logger.info(f"Monthly executive report generated successfully. Files: {list(report_files.keys())}")
+                return {
+                    "success": True,
+                    "report_files": report_files,
+                    "executive_summary": executive_summary,
+                    "notification_sent": notification_sent if self.config.google_chat.webhook_url else None
+                }
+            else:
+                logger.error("Executive summary file not found or not accessible")
+                return {"success": False, "error": "Executive summary not accessible"}
+
+        except Exception as e:
+            error_msg = f"Failed to generate monthly executive report: {e}"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}

@@ -2,9 +2,7 @@
 # Add your primary domains here, one per line
 # Example domains (replace with your actual domains):
 
-example.com
+
+
 public-firing-range.appspot.com
 brokencrystals.com
-httpbin.org
-# mycompany.com
-# api.myservice.com

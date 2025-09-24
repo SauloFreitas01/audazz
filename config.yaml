@@ -30,26 +30,21 @@ scan_policies:
 scheduler:
   interval_hours: 24
 targets:
-  # File-based target management configuration
-  source_type: "file_based"  # Options: "file_based", "config_based"
-  domains_file: "targets/domains.txt"
-  subdomains_dir: "targets/subdomains"
-
-  # Default scan policies for different target types
   default_policies:
-    main_domain: "default"
-    subdomain: "quick"
-    new_subdomain: "quick"  # Policy for newly discovered subdomains
-
-  # Target discovery settings
+    main_domain: default
+    new_subdomain: quick
+    subdomain: quick
   discovery:
+    auto_scan_new: true
     enabled: true
-    auto_scan_new: true  # Automatically scan newly discovered subdomains
-    max_targets_per_batch: 50  # For parallel processing
-
-  # Legacy config-based targets (deprecated, use file-based instead)
-  # To migrate existing targets, add them to targets/domains.txt
-  legacy_targets: []
+    max_targets_per_batch: 50
+  domains_file: targets/domains.txt
+  legacy_targets:
+  - name: brokencrystals.com
+    scan_policy: default
+    url: https://brokencrystals.com
+  source_type: file_based
+  subdomains_dir: targets/subdomains
 zap:
   api_key: ''
   host: localhost

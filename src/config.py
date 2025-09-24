@@ -52,13 +52,29 @@ class ScanPolicy(BaseModel):
     ascan_policy: str = "Default Policy"
 
 
+class TargetConfig(BaseModel):
+    source_type: str = "file_based"  # Options: "file_based", "config_based"
+    domains_file: str = "targets/domains.txt"
+    subdomains_dir: str = "targets/subdomains"
+    default_policies: Dict[str, str] = {
+        "main_domain": "default",
+        "subdomain": "quick",
+        "new_subdomain": "quick"
+    }
+    discovery: Dict[str, Any] = {
+        "enabled": True,
+        "auto_scan_new": True,
+        "max_targets_per_batch": 50
+    }
+    legacy_targets: List[Target] = []
+
 class Config(BaseModel):
     zap: ZapConfig
     zap_docker: Optional[ZapDockerConfig] = None
     scheduler: SchedulerConfig
     google_chat: GoogleChatConfig
     reports: ReportsConfig
-    targets: List[Target]
+    targets: TargetConfig
     scan_policies: Dict[str, ScanPolicy]
 
 
